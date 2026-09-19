@@ -8,6 +8,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collections;
+import java.util.List;
+
 @Service
 @Transactional(readOnly = true)
 public class MovieService {
@@ -52,6 +55,9 @@ public class MovieService {
                 .orElseThrow(() -> new ResourceNotFoundException("Movie", id));
     }
 
+    public List<Movie> findLang(String lang) {
+        return repository.findByLanguage(lang);
+    }
     private MovieResponse toResponse(Movie movie) {
         return new MovieResponse(movie.getId(), movie.getTitle(), movie.getDescription(),
                 movie.getLanguage(), movie.getGenre(), movie.getDurationMinutes(),

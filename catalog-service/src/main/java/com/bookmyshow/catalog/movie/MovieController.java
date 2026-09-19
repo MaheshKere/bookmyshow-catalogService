@@ -11,6 +11,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/v1/movies")
 public class MovieController {
@@ -51,5 +53,10 @@ public class MovieController {
     public ResponseEntity<Void> delete(@PathVariable @Positive Long id) {
         service.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("fetchByLang/{lang}")
+    public List<Movie> getByLanguage(@PathVariable  String lang) {
+        return service.findLang(lang);
     }
 }
