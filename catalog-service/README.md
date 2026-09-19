@@ -20,7 +20,7 @@ $env:DB_PASSWORD = 'choose-a-local-password'
 mvn spring-boot:run
 ```
 
-Default port: 8081. No credentials are committed. Flyway creates the schema before Hibernate validates it. PostgreSQL must already be running; application startup does not create the database itself.
+Default port: 8081. Default-profile credentials come from environment variables. The explicit dev profile contains the requested local-only credentials. Flyway creates the schema before Hibernate validates it. PostgreSQL must already be running; application startup does not create the database itself.
 
 ## Tests
 
@@ -212,3 +212,17 @@ No seat records, ShowSeat, booking, concurrency controls, overlap prevention, ca
 There are no new update/delete endpoints. Future changes to parent lifecycles must respect the foreign keys. The pre-existing Movie language endpoint returns Movie entities; it was left unchanged to preserve the requested Movie scope. All added endpoints use DTOs.
 
 Verification on 2026-09-19: `mvn -pl catalog-service -Pintegration verify` passed all 37 unit/MVC tests and 10 PostgreSQL integration tests (zero failures, errors, or skips), including executable-JAR packaging.
+
+## Local development profile
+
+From catalog-service in PowerShell, with the existing local PostgreSQL database running:
+
+```powershell
+mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
+```
+
+The dev profile connects to jdbc:postgresql://[::1]:5432/catalog_db as catalog_user with password catalog_password. It is never activated globally. Common application.yml still controls Flyway, Hibernate schema validation, UTC JDBC handling, disabled Open Session in View, and the server settings. Default-profile datasource environment-variable behavior is unchanged.
+
+Development logging enables DEBUG for com.bookmyshow.catalog and org.hibernate.SQL, TRACE for org.hibernate.orm.jdbc.bind (SQL parameter values), and formatted SQL. These logging settings apply only to dev; broad Spring DEBUG logging is not enabled.
+
+Spring Boot DevTools is an optional runtime dependency. During spring-boot:run it restarts the application when compiled classpath files change. Saving Java source alone is insufficient: use your IDE's build action or run mvn compile in another terminal. Spring Boot's repackage goal excludes DevTools from the executable production JAR by default; optional also prevents propagation to downstream consumers. Do not force-enable DevTools in production.

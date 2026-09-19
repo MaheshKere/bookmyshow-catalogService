@@ -651,3 +651,21 @@ ShowRequest requires movieId, screenId, and expected theaterId. Only Screen's Th
 active remains descriptive, and lists include inactive records. Inactive parents, duplicate names, and overlapping Shows are currently permitted. End time is explicit, not computed from Movie duration. totalSeats is capacity metadata, not bookable inventory. No new update/delete endpoints, ShowSeat, seat booking, locking, concurrency, messaging, caching, security, payment, notification, gateway, or Kubernetes were added.
 
 The pre-existing Movie language endpoint returns Movie entities and was preserved under the instruction not to rewrite existing Movie functionality; all newly added endpoints return DTOs. Full examples and explanations are in [catalog-service/README.md](catalog-service/README.md).
+
+## Development profile support (2026-09-19)
+
+Created catalog-service/src/main/resources/application-dev.yml. It sets the local datasource URL to jdbc:postgresql://[::1]:5432/catalog_db, username catalog_user, and password catalog_password. It enables DEBUG for com.bookmyshow.catalog and org.hibernate.SQL, TRACE for org.hibernate.orm.jdbc.bind, and Hibernate format_sql. Logging is scoped to dev; no broad Spring DEBUG setting was added.
+
+Modified catalog-service/pom.xml to add spring-boot-devtools with runtime scope and optional=true. Spring Boot's existing Maven repackage configuration excludes DevTools by default; inspection of the generated executable JAR confirmed that no DevTools JAR was included. Automatic restart watches compiled classpath changes: compile using the IDE or mvn compile while spring-boot:run is running.
+
+application.yml was inspected and left unchanged. Common settings remain Flyway enabled, ddl-auto=validate, open-in-view=false, UTC JDBC handling, application/server configuration, and the existing environment-variable datasource defaults. No global active profile was added. No business classes, migrations, tests, or application structure were changed.
+
+Modified catalog-service/README.md to document local startup, logging, restart behavior, and the distinction between default environment-based credentials and the explicit local dev credentials. This history entry is the fourth file created/modified for this task. Unrelated .idea changes were left untouched.
+
+From catalog-service in PowerShell:
+
+```powershell
+mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
+```
+
+Verification: mvn -pl catalog-service -Pintegration verify passed 37 unit/MVC tests and 10 real PostgreSQL Testcontainers integration tests, with zero failures/errors/skips. Executable-JAR packaging passed and DevTools exclusion was verified. The first sandboxed Maven attempt was denied access to its dependency cache; the approved run outside the sandbox succeeded with Podman. Tests ran with the default profile and isolated containers; this task did not launch the application against the local catalog_db or manually exercise restart.
