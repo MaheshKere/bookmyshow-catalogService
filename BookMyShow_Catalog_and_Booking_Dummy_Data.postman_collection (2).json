@@ -1,0 +1,955 @@
+{
+  "info": {
+    "_postman_id": "6dd4cc69-0c61-4d90-a610-97bc4cb88716",
+    "name": "BookMyShow Catalog + Booking - Dummy Data",
+    "description": "Run Catalog requests first to create Movies, Theaters, Screens and Shows and capture their IDs. Then run the Booking Service folder to initialize show seats, reserve seats, create a booking and confirm it.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "bookingBaseUrl",
+      "value": "http://localhost:8082"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Create Movie Chhaava",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/movies",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "movies"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Chhaava\",\n  \"description\": \"Historical drama based on Chhatrapati Sambhaji Maharaj\",\n  \"language\": \"Hindi\",\n  \"genre\": \"Historical Drama\",\n  \"durationMinutes\": 161,\n  \"releaseDate\": \"2025-02-14\",\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"chhaavaMovieId\", r.id);",
+              "console.log(\"chhaavaMovieId:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Create Movie Sairat",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/movies",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "movies"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Sairat\",\n  \"description\": \"Marathi romantic drama\",\n  \"language\": \"Marathi\",\n  \"genre\": \"Drama\",\n  \"durationMinutes\": 174,\n  \"releaseDate\": \"2016-04-29\",\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"sairatMovieId\", r.id);",
+              "console.log(\"sairatMovieId:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Create Theater PVR",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/theaters",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "theaters"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"PVR Phoenix Marketcity\",\n  \"city\": \"Pune\",\n  \"address\": \"Viman Nagar, Pune, Maharashtra\",\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"pvrTheaterId\", r.id);",
+              "console.log(\"pvrTheaterId:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Create Theater Cinepolis",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/theaters",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "theaters"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Cinepolis Seasons Mall\",\n  \"city\": \"Pune\",\n  \"address\": \"Magarpatta, Hadapsar, Pune, Maharashtra\",\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"cinepolisTheaterId\", r.id);",
+              "console.log(\"cinepolisTheaterId:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Create PVR Screen 1",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/theaters/{{pvrTheaterId}}/screens",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "theaters",
+            "{{pvrTheaterId}}",
+            "screens"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Screen 1\",\n  \"totalSeats\": 150,\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"pvrScreen1Id\", r.id);",
+              "console.log(\"pvrScreen1Id:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Create PVR Screen 2",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/theaters/{{pvrTheaterId}}/screens",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "theaters",
+            "{{pvrTheaterId}}",
+            "screens"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Screen 2\",\n  \"totalSeats\": 120,\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"pvrScreen2Id\", r.id);",
+              "console.log(\"pvrScreen2Id:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - Create Cinepolis Screen 1",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/theaters/{{cinepolisTheaterId}}/screens",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "theaters",
+            "{{cinepolisTheaterId}}",
+            "screens"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Screen 1\",\n  \"totalSeats\": 180,\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"cinepolisScreen1Id\", r.id);",
+              "console.log(\"cinepolisScreen1Id:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Create Show 1",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/shows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "shows"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"movieId\": {{chhaavaMovieId}},\n  \"screenId\": {{pvrScreen1Id}},\n  \"theaterId\": {{pvrTheaterId}},\n  \"startTime\": \"2026-09-20T04:30:00Z\",\n  \"endTime\": \"2026-09-20T07:15:00Z\",\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"show1Id\", r.id);",
+              "console.log(\"show1Id:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - Create Show 2",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/shows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "shows"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"movieId\": {{chhaavaMovieId}},\n  \"screenId\": {{pvrScreen2Id}},\n  \"theaterId\": {{pvrTheaterId}},\n  \"startTime\": \"2026-09-20T09:30:00Z\",\n  \"endTime\": \"2026-09-20T12:15:00Z\",\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"show2Id\", r.id);",
+              "console.log(\"show2Id:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Create Show 3",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/shows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "shows"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"movieId\": {{sairatMovieId}},\n  \"screenId\": {{cinepolisScreen1Id}},\n  \"theaterId\": {{cinepolisTheaterId}},\n  \"startTime\": \"2026-09-20T12:30:00Z\",\n  \"endTime\": \"2026-09-20T15:30:00Z\",\n  \"active\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Created successfully\", () => pm.response.to.have.status(201));",
+              "const r = pm.response.json();",
+              "pm.collectionVariables.set(\"show3Id\", r.id);",
+              "console.log(\"show3Id:\", r.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 - List Movies",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/movies",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "movies"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "12 - List Theaters",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/theaters",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "theaters"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "13 - List PVR Screens",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/theaters/{{pvrTheaterId}}/screens",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "theaters",
+            "{{pvrTheaterId}}",
+            "screens"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "14 - List Shows",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/shows",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "shows"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Booking Service - Dummy Data and Flow",
+      "item": [
+        {
+          "name": "15 - Initialize Booking Seats for Show 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bookingBaseUrl}}/api/v1/shows/{{show1Id}}/seats",
+              "host": [
+                "{{bookingBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shows",
+                "{{show1Id}}",
+                "seats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"seatNumbers\": [\n    \"A1\",\n    \"A2\",\n    \"A3\",\n    \"A4\",\n    \"A5\",\n    \"B1\",\n    \"B2\",\n    \"B3\",\n    \"B4\",\n    \"B5\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Seats initialized successfully\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16 - List Available Seats for Show 1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bookingBaseUrl}}/api/v1/shows/{{show1Id}}/seats?status=AVAILABLE&page=0&size=20",
+              "host": [
+                "{{bookingBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shows",
+                "{{show1Id}}",
+                "seats"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "AVAILABLE"
+                },
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Available seats returned\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "const seats = Array.isArray(r) ? r : (r.content || []);",
+                  "if (seats.length >= 2) {",
+                  "  pm.collectionVariables.set(\"bookingSeat1Id\", seats[0].id);",
+                  "  pm.collectionVariables.set(\"bookingSeat2Id\", seats[1].id);",
+                  "  console.log(\"bookingSeat1Id:\", seats[0].id);",
+                  "  console.log(\"bookingSeat2Id:\", seats[1].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "17 - Reserve Two Seats",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bookingBaseUrl}}/api/v1/reservations",
+              "host": [
+                "{{bookingBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reservations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"showId\": {{show1Id}},\n  \"seatIds\": [{{bookingSeat1Id}}, {{bookingSeat2Id}}]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Reservation created\", () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set(\"reservationReference\", r.reservationReference);",
+                  "console.log(\"reservationReference:\", r.reservationReference);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "18 - Get Reservation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bookingBaseUrl}}/api/v1/reservations/{{reservationReference}}",
+              "host": [
+                "{{bookingBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reservations",
+                "{{reservationReference}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Reservation returned\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "19 - Create Booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bookingBaseUrl}}/api/v1/bookings",
+              "host": [
+                "{{bookingBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bookings"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationReference\": \"{{reservationReference}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Booking created/replayed\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set(\"bookingReference\", r.bookingReference);",
+                  "console.log(\"bookingReference:\", r.bookingReference);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "20 - Get Booking",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bookingBaseUrl}}/api/v1/bookings/{{bookingReference}}",
+              "host": [
+                "{{bookingBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bookings",
+                "{{bookingReference}}"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Booking returned\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "21 - Confirm Booking",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{bookingBaseUrl}}/api/v1/bookings/{{bookingReference}}/confirm",
+              "host": [
+                "{{bookingBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bookings",
+                "{{bookingReference}}",
+                "confirm"
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Booking confirmed\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "22 - List Seats After Confirmation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{bookingBaseUrl}}/api/v1/shows/{{show1Id}}/seats?page=0&size=20",
+              "host": [
+                "{{bookingBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shows",
+                "{{show1Id}}",
+                "seats"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Seats returned\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "23 - Initialize Booking Seats for Show 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{bookingBaseUrl}}/api/v1/shows/{{show2Id}}/seats",
+              "host": [
+                "{{bookingBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "shows",
+                "{{show2Id}}",
+                "seats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"seatNumbers\": [\n    \"C1\",\n    \"C2\",\n    \"C3\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Seats initialized successfully\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

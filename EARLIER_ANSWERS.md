@@ -669,3 +669,165 @@ mvn spring-boot:run "-Dspring-boot.run.profiles=dev"
 ```
 
 Verification: mvn -pl catalog-service -Pintegration verify passed 37 unit/MVC tests and 10 real PostgreSQL Testcontainers integration tests, with zero failures/errors/skips. Executable-JAR packaging passed and DevTools exclusion was verified. The first sandboxed Maven attempt was denied access to its dependency cache; the approved run outside the sandbox succeeded with Podman. Tests ran with the default profile and isolated containers; this task did not launch the application against the local catalog_db or manually exercise restart.
+
+## Prompt 4: Separate Booking Service, reservations, and PostgreSQL concurrency (2026-09-19)
+
+Implemented a NEW booking-service Maven module. Root pom.xml now lists both services. No booking functionality was added to Catalog, and no Catalog application files were edited during this task. The existing Catalog DevTools pom.xml change and unrelated IDE changes were preserved. Created root README.md and booking-service/README.md; this entry records the implementation.
+
+### Final design
+
+Booking owns booking_db and runs on HTTP 8082. The dev profile uses jdbc:postgresql://[::1]:5433/booking_db with booking_user / booking_password; default configuration uses BOOKING_DB_URL, BOOKING_DB_USERNAME, BOOKING_DB_PASSWORD, and optional BOOKING_SERVER_PORT. Flyway is enabled, ddl-auto=validate, OSIV is disabled, JDBC uses UTC, and PostgreSQL lock_timeout is set to 5 seconds on pool connections. Dev logging and optional runtime DevTools follow Catalog's conventions.
+
+No Movie, Theater, Screen, or Show entity is duplicated. showId is a positive external identifier without a cross-service foreign key. Catalog existence/activity, Show start time, and Screen capacity/layout validation are deliberately deferred; no Catalog REST client is needed for this phase.
+
+### Schema, mappings, and indexes
+
+Added booking-service/src/main/resources/db/migration/V1__create_booking_inventory.sql:
+
+- reservations: identity PK, unique UUID reservation_reference, external show_id, ACTIVE/CONFIRMED/EXPIRED/CANCELLED status, expiry, audit timestamps.
+- show_seats: identity PK, show_id, seat_number, AVAILABLE/HELD/BOOKED status, @Version version, nullable current_reservation_id FK, audit timestamps, UNIQUE(show_id, seat_number).
+- reservation_seats: identity PK, required Reservation and ShowSeat FKs, UNIQUE(reservation_id, seat_id), immutable historical membership.
+- bookings: identity PK, unique UUID booking_reference, UNIQUE required reservation_id FK, show_id, PENDING/CONFIRMED/CANCELLED status, audit timestamps.
+
+Check constraints enforce positive show IDs, valid status values and seat labels, and consistency between seat status and nullable current owner. No foreign key accesses Catalog. The service checks cross-row show/membership/ownership invariants under locks.
+
+ShowSeat owns its LAZY ManyToOne currentReservation; ReservationSeat owns two LAZY ManyToOne relationships; Booking owns a LAZY OneToOne Reservation relationship through its unique FK. No parent collections, mappedBy, cascades, orphanRemoval, or Lombok @Data are used. Historical membership is retained after release and re-reservation. Booking reads use EntityGraph for Reservation.
+
+PK/unique indexes enforce identity, external references, per-show seat uniqueness, one booking per reservation, and distinct membership. Additional indexes support show/status/ID browsing, reverse local FK checks, and bounded ACTIVE-expiration scans. Every index's purpose is explained in booking-service/README.md.
+
+### Request flow and transaction boundaries
+
+MVC validates record DTOs, then calls the service proxy. ReservationService.reserve opens a write transaction, locks requested ShowSeats ordered by ID using PESSIMISTIC_WRITE, checks all IDs/show ownership/availability, inserts a five-minute Reservation and membership records, and changes managed seats to HELD with a current owner. Hibernate dirty checking plus @Version writes seat changes. Explicit flush sends SQL but does not commit; the proxy commits after normal service return and before the controller receives the DTO. Any failure rolls back the entire operation.
+
+Read methods inherit @Transactional(readOnly=true). Initialization, reserve, cancel, expire, create Booking, and confirm Booking use write service transactions. Controllers have no transactions. Managed entities are not redundantly saved. Reservation helper methods use MANDATORY propagation for calls from BookingService so locks are retained within the caller's transaction.
+
+Existing-reservation operations lock Reservation first, then seats in ascending ID order. All Booking mutations serialize on that Reservation lock. New reservations lock only seats and reject held seats without locking their old owners. No Java synchronized or in-memory mutex is used.
+
+Conceptual PostgreSQL flow is BEGIN; SELECT seats ORDER BY id FOR UPDATE; validate; INSERT reservation/membership; UPDATE seats ... WHERE id=? AND version=?; COMMIT. PostgreSQL/Hibernate can use FOR NO KEY UPDATE for the write lock. Competing writers block; after the winning transaction commits, the waiter sees HELD at READ COMMITTED and returns 409. Pessimistic locking protects the actual high-contention reservation path before state changes. @Version independently rejects stale updates at flush/commit; a separate real PostgreSQL test demonstrates the optimistic path without pessimistic locking.
+
+### Expiry, booking, cancellation, and idempotency
+
+ReservationExpirationScheduler is separate from ReservationService. Every 30 seconds it retrieves up to 100 eligible IDs and calls expire(id) through the service proxy, one transaction per reservation. It rechecks ACTIVE and expiresAt <= now under the lock, verifies/locks owned HELD seats, releases ownership, marks EXPIRED, and cancels any PENDING Booking. A failed item is logged and retried next sweep. Tests disable scheduling and inject a controllable Clock.
+
+Confirmation locks the same Reservation, verifies PENDING/ACTIVE, checks expiry both before and after seat-lock waits, validates membership/current ownership, and commits Booking CONFIRMED + Reservation CONFIRMED + seats BOOKED atomically. An expired hold cannot confirm even before cleanup. A previously confirmed booking can be confirmed again idempotently. Cleanup never releases confirmed inventory.
+
+POST /bookings uses reservationReference as its natural idempotency identity. Under the Reservation lock it returns the existing Booking or creates PENDING for an ACTIVE/unexpired reservation. UNIQUE(bookings.reservation_id) is the database backstop. Both creation and replay return 200 with Location; replay returns the same resource even if it is now CONFIRMED/CANCELLED.
+
+ACTIVE reservation cancellation releases HELD seats and cancels a PENDING Booking. PENDING booking cancellation delegates to that path. CANCELLED retries are harmless; they do not release a replacement owner's seats. Confirmed booking/reservation cancellation returns 409; no refund handling. Reservation creation has no client idempotency-key support and retrying a successful reservation receives a seat conflict.
+
+### APIs and examples
+
+| Method | Path | Example request |
+|---|---|---|
+| POST | /api/v1/shows/100/seats | {"seatNumbers":["A1","A2","B1"]} |
+| GET | /api/v1/shows/100/seats?status=AVAILABLE&page=0&size=20 | No body |
+| POST | /api/v1/reservations | {"showId":100,"seatIds":[1,2]} |
+| GET | /api/v1/reservations/{reservationReference} | No body |
+| POST | /api/v1/reservations/{reservationReference}/cancel | No body |
+| POST | /api/v1/bookings | {"reservationReference":"returned-reference"} |
+| GET | /api/v1/bookings/{bookingReference} | No body |
+| POST | /api/v1/bookings/{bookingReference}/confirm | No body |
+| POST | /api/v1/bookings/{bookingReference}/cancel | No body |
+
+Initialization/reservation return 201 with Location. Other actions return 200. Invalid input/wrong show uses 400, missing resources 404, and lifecycle/availability/constraint/optimistic/pessimistic conflicts 409. Error responses follow Catalog's Problem Details style without exposing SQL.
+
+### Local database and startup
+
+The setup commands below were documented, not executed against a persistent local database. With the existing Podman machine running:
+
+```powershell
+podman volume create booking_pgdata
+podman run --name booking-postgres -d -p 5433:5432 -e POSTGRES_DB=booking_db -e POSTGRES_USER=booking_user -e POSTGRES_PASSWORD=booking_password -v booking_pgdata:/var/lib/postgresql/data docker.io/library/postgres:17-alpine
+podman exec booking-postgres pg_isready -U booking_user -d booking_db
+mvn -pl booking-service spring-boot:run "-Dspring-boot.run.profiles=dev"
+```
+
+If the machine is stopped, first run podman machine start. For a previously created/stopped container, use podman start booking-postgres rather than creating it again. The image initializes the role/database only on first use of the volume. Local port 5433 keeps Booking separate from Catalog's 5432.
+
+### Tests and results
+
+Executed:
+
+```powershell
+mvn -pl booking-service test
+mvn -pl booking-service -Pintegration verify
+mvn -pl catalog-service -Pintegration verify
+```
+
+The first unit run exposed a Mockito test-restubbing error; it was corrected. Both final integration-profile builds include unit/MVC execution and executable-JAR packaging and completed BUILD SUCCESS:
+
+| Suite | Tests | Failures/errors/skips |
+|---|---:|---|
+| Booking unit/MVC | 32 | 0 / 0 / 0 |
+| Booking PostgreSQL integration | 19 | 0 / 0 / 0 |
+| Catalog unit/MVC | 37 | 0 / 0 / 0 |
+| Catalog PostgreSQL integration | 10 | 0 / 0 / 0 |
+| Total | 98 | 0 / 0 / 0 |
+
+Booking unit tests: 11 BookingService, 11 ReservationService, 3 ShowSeatService, 1 scheduler, 6 MVC. They verify validation, lifecycle transitions, mapping, idempotency, error translation, and scheduler delegation, not database semantics.
+
+BookingApiIT uses real postgres:17-alpine Testcontainers with no surrounding test transaction. It verifies Flyway, lazy relationships, PostgreSQL uniqueness/FK/check constraints, atomic initialization/reservation, correct statuses/ownership, expiry/history, cancellation, pagination/status filtering, and HTTP error codes.
+
+Concurrency evidence:
+- Same seat, two concurrent HTTP requests, repeated three times: exactly one 201 and one 409, one ACTIVE owner and one HELD seat.
+- Overlapping multi-seat requests: one succeeds, loser leaves no partial holds.
+- Concurrent booking creation: same reference, exactly one row.
+- Expiration versus confirmation and cancellation versus confirmation leave consistent committed states.
+- A deliberate row lock is observed as a lock wait in PostgreSQL pg_stat_activity; the waiting reservation proceeds only after commit.
+- Two version-stale managed-entity updates without pessimistic locking: one commits, one raises an optimistic conflict.
+
+The concurrency claim is based on passing real PostgreSQL tests. No H2, coverage tools/reports, Redis, or in-memory locking was used. Container runs used approved access to Podman's API. No persistent local Booking database/app was started. Future root commands are mvn test and mvn -Pintegration verify for both modules.
+
+### Scope
+
+No Kafka, Redis, Payment/Notification Service, Security/JWT, API Gateway, Saga, Outbox, Kubernetes, or distributed Redis locks. Confirmation simulates successful payment. Full design, SQL explanation, commands, limits, and the exact file inventory are in booking-service/README.md.
+
+Exact created-file inventory (excluding generated target output):
+
+```text
+booking-service/.gitignore
+booking-service/README.md
+booking-service/pom.xml
+booking-service/src/main/java/com/bookmyshow/booking/BookingServiceApplication.java
+booking-service/src/main/java/com/bookmyshow/booking/booking/Booking.java
+booking-service/src/main/java/com/bookmyshow/booking/booking/BookingController.java
+booking-service/src/main/java/com/bookmyshow/booking/booking/BookingRepository.java
+booking-service/src/main/java/com/bookmyshow/booking/booking/BookingService.java
+booking-service/src/main/java/com/bookmyshow/booking/booking/BookingStatus.java
+booking-service/src/main/java/com/bookmyshow/booking/booking/dto/BookingRequest.java
+booking-service/src/main/java/com/bookmyshow/booking/booking/dto/BookingResponse.java
+booking-service/src/main/java/com/bookmyshow/booking/exception/BusinessValidationException.java
+booking-service/src/main/java/com/bookmyshow/booking/exception/ConflictException.java
+booking-service/src/main/java/com/bookmyshow/booking/exception/GlobalExceptionHandler.java
+booking-service/src/main/java/com/bookmyshow/booking/exception/ResourceNotFoundException.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/Reservation.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/ReservationController.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/ReservationExpirationScheduler.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/ReservationRepository.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/ReservationSeat.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/ReservationSeatRepository.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/ReservationService.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/ReservationStatus.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/dto/ReservationRequest.java
+booking-service/src/main/java/com/bookmyshow/booking/reservation/dto/ReservationResponse.java
+booking-service/src/main/java/com/bookmyshow/booking/seat/SeatStatus.java
+booking-service/src/main/java/com/bookmyshow/booking/seat/ShowSeat.java
+booking-service/src/main/java/com/bookmyshow/booking/seat/ShowSeatController.java
+booking-service/src/main/java/com/bookmyshow/booking/seat/ShowSeatRepository.java
+booking-service/src/main/java/com/bookmyshow/booking/seat/ShowSeatService.java
+booking-service/src/main/java/com/bookmyshow/booking/seat/dto/InitializeSeatsRequest.java
+booking-service/src/main/java/com/bookmyshow/booking/seat/dto/ShowSeatPageResponse.java
+booking-service/src/main/java/com/bookmyshow/booking/seat/dto/ShowSeatResponse.java
+booking-service/src/main/resources/application-dev.yml
+booking-service/src/main/resources/application.yml
+booking-service/src/main/resources/db/migration/V1__create_booking_inventory.sql
+booking-service/src/test/java/com/bookmyshow/booking/BookingApiIT.java
+booking-service/src/test/java/com/bookmyshow/booking/BookingControllerTest.java
+booking-service/src/test/java/com/bookmyshow/booking/booking/BookingServiceTest.java
+booking-service/src/test/java/com/bookmyshow/booking/reservation/ReservationExpirationSchedulerTest.java
+booking-service/src/test/java/com/bookmyshow/booking/reservation/ReservationServiceTest.java
+booking-service/src/test/java/com/bookmyshow/booking/seat/ShowSeatServiceTest.java
+README.md
+```
+
+Modified for this phase: pom.xml and EARLIER_ANSWERS.md.

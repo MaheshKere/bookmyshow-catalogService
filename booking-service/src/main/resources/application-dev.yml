@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: "jdbc:postgresql://[::1]:5433/booking_db"
+    username: booking_user
+    password: booking_password
+  jpa:
+    properties:
+      hibernate:
+        format_sql: true
+logging:
+  level:
+    com.bookmyshow.booking: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE
