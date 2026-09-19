@@ -30,7 +30,7 @@ mvn -Pintegration verify
 mvn package
 ```
 
-`mvn test` runs service unit tests and MVC slice tests. The integration profile additionally runs `MovieApiIT` against `postgres:17-alpine` using Testcontainers. A running Docker-compatible engine is required. On Windows, Podman requires a configured/running machine and a Testcontainers-compatible API connection. Integration tests do not silently skip when an engine is unavailable. They supply isolated database credentials dynamically, so DB_PASSWORD is not needed for tests.
+`mvn test` runs service unit tests and MVC slice tests. The integration profile additionally runs `MovieApiIT` and `CatalogApiIT` against `postgres:17-alpine` using Testcontainers. A running Docker-compatible engine is required. On Windows, Podman requires a configured/running machine and a Testcontainers-compatible API connection. Integration tests do not silently skip when an engine is unavailable. They supply isolated database credentials dynamically, so DB_PASSWORD is not needed for tests.
 
 ## API
 
@@ -101,7 +101,7 @@ V1__create_movies.sql defines the table, identity primary key, bounded columns, 
 
 A sequence generator can support better insert batching than IDENTITY; simplicity wins for this iteration. An interface plus service implementation or MapStruct could become useful with greater complexity, but is unnecessary here. Database-generated timestamps or Spring Data auditing are alternatives to entity callbacks. Soft deletion and @Version-based lost-update protection are deliberate future design choices, not implemented implicitly. Current PUT is last-writer-wins.
 
-No city, theatre, screen, seat, security, messaging, caching, gateway, booking, payment or Kubernetes functionality is included.
+The Theater, Screen, and Show extension is documented below. Seat inventory, security, messaging, caching, gateway, booking, payment, and Kubernetes remain outside this iteration.
 
 ## Interview questions
 
@@ -115,3 +115,100 @@ No city, theatre, screen, seat, security, messaging, caching, gateway, booking, 
 8. What does readOnly=true guarantee, and why disable Open Session in View?
 9. Why are DTO validation and database constraints both necessary?
 10. What can Mockito tests prove that PostgreSQL integration tests cannot, and vice versa?
+
+## Theater, Screen, and Show iteration
+
+All three features live inside catalog-service in feature packages beside movie. Movie sources and V1 remain unchanged. New endpoints return record DTOs; no new endpoint returns an entity.
+
+| Method | Path | Result |
+|---|---|---|
+| POST | /api/v1/theaters | Create Theater; 201 and Location |
+| GET | /api/v1/theaters/{id} | Theater DTO or 404 |
+| GET | /api/v1/theaters | Paginated Theaters |
+| POST | /api/v1/theaters/{theaterId}/screens | Create Screen under existing Theater |
+| GET | /api/v1/screens/{id} | Screen DTO or 404 |
+| GET | /api/v1/theaters/{theaterId}/screens | Paginated Screens; missing Theater is 404 |
+| POST | /api/v1/shows | Create Show with existing Movie, Screen, expected Theater |
+| GET | /api/v1/shows/{id} | Show DTO including Movie/Screen/Theater display fields |
+| GET | /api/v1/shows?movieId=1&theaterId=1&city=Pune&date=2026-10-01 | Optional filters combined with AND |
+
+Every list supports page=0&size=20; size is limited to 1?100. Theater/Screen order is ID ascending; Show order is startTime then ID ascending. Missing search matches return an empty page. City is a case-insensitive exact match. Both active and inactive records are returned.
+
+Create examples, in dependency order (substitute generated IDs):
+
+```json
+{"name":"Central Cinema","city":"Pune","address":"Main Road","active":true}
+```
+
+```json
+{"name":"Screen 1","totalSeats":150,"active":true}
+```
+
+```json
+{
+  "movieId":1,
+  "screenId":1,
+  "theaterId":1,
+  "startTime":"2026-10-01T18:00:00+05:30",
+  "endTime":"2026-10-01T20:00:00+05:30",
+  "active":true
+}
+```
+
+Times use Instant and PostgreSQL TIMESTAMPTZ. Supply an offset or Z; responses normalize to UTC. date filters the Show start within [00:00 UTC, next day 00:00 UTC), not the cinema's local day or every Show overlapping the day. The API accepts years 0001?9999; search uses finite bounds for an omitted date. A future local-day search should explicitly model Theater time zones.
+
+theaterId in ShowRequest is an expected-parent check, not a duplicated Show database column. The service verifies the Theater exists and matches Screen.theater before saving. It also verifies Movie/Screen existence and strict startTime < endTime. Screen capacity is checked at the DTO, service, and database levels. Missing references return 404, business validation returns 400, and database integrity conflicts return 409. The existing advice now handles method validation as well as request-body validation with field errors.
+
+### Relationships, fetching, and transactions
+
+| Relationship | Owning side / foreign key | Fetch / lifecycle |
+|---|---|---|
+| Screen -> Theater | Screen / screens.theater_id | LAZY, required, no cascade |
+| Show -> Movie | Show / shows.movie_id | LAZY, required, no cascade |
+| Show -> Screen | Show / shows.screen_id | LAZY, required, no cascade |
+
+These unidirectional ManyToOne relationships already allow many Screens per Theater and many Shows per Movie/Screen. Parent-side collections are not needed for these use cases: repositories page children by parent ID. There is no OneToMany, inverse side, mappedBy, or orphanRemoval. If a future use case warrants a parent collection, its mappedBy must name the corresponding child property; the child remains the owner because it writes the foreign key.
+
+Cascade is omitted because creating or deleting a Show must not create/delete its Movie, Screen, or Theater. These parents have independent lifecycles. Database foreign keys prevent parent deletion while referenced, including existing Movie DELETE, which now returns 409 for a scheduled Movie.
+
+Show DTO mapping reads Movie title, Screen name, and Theater name/city. Without a fetch plan, a Show page could trigger additional SELECTs for each distinct Movie, Screen, and Theater. ShowRepository uses an EntityGraph on search and findById to fetch movie, screen, and screen.theater together. Only to-one joins are fetched, so SQL pagination is safe; the count query remains separate. The nullable city parameter is explicitly cast to string to avoid PostgreSQL lower(bytea) errors.
+
+Read methods inherit service-level @Transactional(readOnly = true); create methods override with @Transactional. Parent validation, insertion, and DTO mapping occur inside that boundary. save is used only for new entities. No controller transaction or Open Session in View is needed; open-in-view=false and ddl-auto=validate remain unchanged.
+
+### Migration and indexes
+
+V2__create_theaters_screens_shows.sql adds identity primary keys, required columns, three foreign keys, positive totalSeats and strict time-order checks. No existing migration is edited. Audit timestamps retain Movie's JPA callback style.
+
+- screens(theater_id): Theater's Screen listing and Theater-to-Show join path.
+- shows(movie_id, start_time): Movie/date searches and Movie foreign-key checks.
+- shows(screen_id, start_time): Screen scheduling lookups, Theater-to-Show joins, and Screen foreign-key checks.
+- shows(start_time, id): date-only searches and chronological pagination.
+
+Primary keys already have indexes. City/name indexes are deferred until data size and measured query plans justify them. Optional-filter queries deliberately favor readability here; benchmark with representative data before adding search abstractions or more indexes.
+
+### Tests for this iteration
+
+TheaterServiceTest, ScreenServiceTest, and ShowServiceTest use Mockito to verify DTO mapping, reference checks, Theater mismatch, capacity/time validation, date bounds, and pagination. CatalogControllerTest checks HTTP binding/validation, pagination/filter errors, and Problem Details. Existing Movie tests remain in place.
+
+CatalogApiIT uses a real postgres:17-alpine container with the full application and no enclosing test transaction. It verifies committed HTTP creates/reads, multiple Screens per Theater, persisted foreign keys, LAZY mappings, non-cascading deletion, Flyway history, database FK/NOT NULL/CHECK constraints, search combinations and UTC boundaries, pagination, and Movie deletion conflicts. Its Hibernate statistics test uses distinct Movie/Screen/Theater rows and a fresh service transaction: a full Show page needs exactly two SQL statements (content plus count); a single Show needs one.
+
+Run from the repository root:
+
+```powershell
+mvn -pl catalog-service test
+mvn -pl catalog-service -Pintegration verify
+$env:DB_URL = 'jdbc:postgresql://localhost:5432/catalog_db'
+$env:DB_USERNAME = 'catalog_user'
+$env:DB_PASSWORD = 'choose-a-local-password'
+mvn -pl catalog-service spring-boot:run
+```
+
+A running PostgreSQL database is needed for application startup. Tests create their own isolated PostgreSQL containers and need access to a Docker-compatible API. In a restricted agent sandbox, the integration command may require approval for named-pipe access to the running Podman machine. No runtime or credentials are hard-coded into the project.
+
+### Decisions before the next phase
+
+No seat records, ShowSeat, booking, concurrency controls, overlap prevention, capacity allocation, pricing, or new microservice have been added. totalSeats is descriptive capacity only. active is descriptive; it does not prohibit creating a Show for an inactive parent. End time is supplied explicitly and is not derived from Movie duration. Duplicate Theater/Screen names and overlapping Shows are currently allowed. Decide those scheduling policies explicitly in a later iteration.
+
+There are no new update/delete endpoints. Future changes to parent lifecycles must respect the foreign keys. The pre-existing Movie language endpoint returns Movie entities; it was left unchanged to preserve the requested Movie scope. All added endpoints use DTOs.
+
+Verification on 2026-09-19: `mvn -pl catalog-service -Pintegration verify` passed all 37 unit/MVC tests and 10 PostgreSQL integration tests (zero failures, errors, or skips), including executable-JAR packaging.

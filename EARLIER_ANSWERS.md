@@ -560,3 +560,94 @@ Database setup, application startup commands, request examples, alternatives, an
 10. Which failures require real PostgreSQL integration tests rather than Mockito tests?
 
 Movie functionality is implemented. I’ll wait for your approval before adding the next functionality.
+
+## Answer 3: Theater, Screen, and Show implementation (2026-09-19)
+
+Extended catalog-service using its existing feature packages, Java record DTOs, Lombok getters/protected JPA constructors, timestamp callbacks, constructor injection, service transactions, Problem Details advice, Flyway, and PostgreSQL Testcontainers. Movie source files, its existing tests, V1, Maven configuration, and application.yml were not changed. No Booking Service or seat inventory was started.
+
+**1. Files created/modified**
+
+Each of these new feature packages contains seven files:
+
+- src/main/java/com/bookmyshow/catalog/theater/: Theater.java, TheaterRepository.java, TheaterService.java, TheaterController.java, dto/TheaterRequest.java, dto/TheaterResponse.java, dto/TheaterPageResponse.java.
+- src/main/java/com/bookmyshow/catalog/screen/: Screen.java, ScreenRepository.java, ScreenService.java, ScreenController.java, dto/ScreenRequest.java, dto/ScreenResponse.java, dto/ScreenPageResponse.java.
+- src/main/java/com/bookmyshow/catalog/show/: Show.java, ShowRepository.java, ShowService.java, ShowController.java, dto/ShowRequest.java, dto/ShowResponse.java, dto/ShowPageResponse.java.
+
+Other new files under catalog-service:
+
+- src/main/java/com/bookmyshow/catalog/exception/BusinessValidationException.java.
+- src/main/resources/db/migration/V2__create_theaters_screens_shows.sql.
+- src/test/java/com/bookmyshow/catalog/theater/TheaterServiceTest.java.
+- src/test/java/com/bookmyshow/catalog/screen/ScreenServiceTest.java.
+- src/test/java/com/bookmyshow/catalog/show/ShowServiceTest.java.
+- src/test/java/com/bookmyshow/catalog/CatalogControllerTest.java.
+- src/test/java/com/bookmyshow/catalog/CatalogApiIT.java.
+
+Modified catalog-service/src/main/java/com/bookmyshow/catalog/exception/GlobalExceptionHandler.java to support business validation and consistent field-error details for Spring method validation. Updated catalog-service/README.md with endpoints, examples, mappings, indexes, testing, commands, and design limits. Appended this entry to EARLIER_ANSWERS.md. Unrelated .idea changes were left untouched.
+
+**2. Database migration**
+
+V2 adds theaters, screens, and shows with identity primary keys, NOT NULL columns, TIMESTAMPTZ audit/show times, three foreign keys, total_seats > 0, and start_time < end_time. V1 is unchanged; Hibernate still validates instead of creating/updating the schema.
+
+Indexes and reasons: screens(theater_id) supports the nested Screen list and Theater search join; shows(movie_id, start_time) supports Movie/date searches and Movie FK checks; shows(screen_id, start_time) supports Screen scheduling lookups, Theater searches through Screens, and Screen FK checks; shows(start_time, id) supports date-only searches and stable chronological pagination. No speculative city/name indexes were added.
+
+**3?4. JPA relationships and ownership**
+
+| Relationship | Owner | Why |
+|---|---|---|
+| Screen -> Theater | Screen | screens.theater_id is the foreign key |
+| Show -> Movie | Show | shows.movie_id is the foreign key |
+| Show -> Screen | Show | shows.screen_id is the foreign key |
+
+All are required unidirectional ManyToOne relationships. Multiple child rows establish the requested one-to-many cardinalities without parent collections. Parent collections, inverse sides, OneToMany, and mappedBy are unnecessary for these APIs because repositories provide paginated child queries. If a future parent collection is needed, mappedBy should point to the child's owning property.
+
+**5?6. Fetching and lifecycle**
+
+All relationships explicitly use LAZY, not blanket EAGER. No cascade or orphanRemoval is enabled: Movie, Theater, Screen, and Show have separately managed lifecycles. Removing a Show must not remove its parents. Foreign keys prevent deleting a referenced parent; existing Movie DELETE now returns 409 when Shows reference the Movie.
+
+**7?8. N+1 risk and prevention**
+
+ShowResponse includes Movie title, Screen name, and Theater name/city. Mapping a page without a fetch plan can cause additional SQL per distinct related record. ShowRepository applies EntityGraph(movie, screen, screen.theater) to paginated search and findById. Only to-one joins are fetched, keeping SQL pagination safe; the count is separate. A real PostgreSQL test with distinct parents measured exactly two SQL statements for a full page with a count and one for a single detailed Show.
+
+**9. Transactions**
+
+Each new service has @Transactional(readOnly = true); create methods override with @Transactional. Reference validation, insert, and DTO mapping occur inside the service transaction. Only new entities are saved. No unnecessary save calls for loaded parents, no controller transactions, and no reliance on Open Session in View. spring.jpa.open-in-view=false remains unchanged.
+
+**10. Tests and actual verification**
+
+- 18 new service test cases: Theater (3), Screen (6), Show (9). Mockito checks mapping, pagination, required references, Theater mismatch, positive seats, strict time order, and UTC date bounds; it does not claim to prove SQL behavior.
+- 6 new MVC tests check body/path/query validation, pagination, date parsing, and Problem Details.
+- 6 new real PostgreSQL integration tests check HTTP persistence/reads, multiple Screens per Theater, persisted FK relationships, LAZY mappings, absence of parent-delete cascades, Flyway versions, PostgreSQL FK/NOT NULL/CHECK constraints, search filters and UTC date boundaries, pagination, 404/400/409 behavior, and N+1 prevention.
+- All 13 existing Movie unit/MVC tests and all 4 existing Movie integration tests pass.
+
+Final command: mvn -pl catalog-service -Pintegration verify ? BUILD SUCCESS, 37 unit/MVC tests plus 10 PostgreSQL integration tests, zero failures/errors/skips. The executable JAR was packaged successfully. Containers used postgres:17-alpine through the running Podman Docker-compatible API.
+
+Earlier verification caught and fixed an extended-year Instant literal, Spring's method-validation error-body difference, and PostgreSQL binding an absent city to an invalid type for lower(). The city query now explicitly casts that parameter to string. The initial sandboxed integration attempt was denied named-pipe access; the approved run outside the sandbox executed the actual PostgreSQL tests. No H2 or skipped-container fallback was introduced.
+
+**11. Commands**
+
+From C:\Mahesh\Java\bookmyshowapp:
+
+```powershell
+mvn -pl catalog-service test
+mvn -pl catalog-service -Pintegration verify
+
+$env:DB_URL = 'jdbc:postgresql://localhost:5432/catalog_db'
+$env:DB_USERNAME = 'catalog_user'
+$env:DB_PASSWORD = 'choose-a-local-password'
+mvn -pl catalog-service spring-boot:run
+```
+
+Application startup requires the role/database and running PostgreSQL described in catalog-service/README.md. Tests supply their own isolated database and credentials; integration tests require a running Docker-compatible engine and API access. Default application port remains 8081.
+
+**12. API and decisions before the next phase**
+
+POST/GET /api/v1/theaters; GET /api/v1/theaters/{id}; POST/GET /api/v1/theaters/{theaterId}/screens; GET /api/v1/screens/{id}; POST/GET /api/v1/shows; GET /api/v1/shows/{id}. POST returns 201 with a resource Location. All lists are paginated, page is zero-based, and size is 1?100.
+
+Show search optionally combines movieId, theaterId, city, and date. City is a case-insensitive exact match; date means the UTC day containing startTime, using an inclusive lower/exclusive upper bound. Show order is startTime then ID; Theater/Screen order is ID. Missing search matches produce an empty page; a missing Theater on the nested Screen route is 404.
+
+ShowRequest requires movieId, screenId, and expected theaterId. Only Screen's Theater relationship is persisted; theaterId is not duplicated on shows. Times require an offset or Z, normalize to UTC, and are restricted to years 0001?9999. A future cinema-local date API needs an explicit time-zone model.
+
+active remains descriptive, and lists include inactive records. Inactive parents, duplicate names, and overlapping Shows are currently permitted. End time is explicit, not computed from Movie duration. totalSeats is capacity metadata, not bookable inventory. No new update/delete endpoints, ShowSeat, seat booking, locking, concurrency, messaging, caching, security, payment, notification, gateway, or Kubernetes were added.
+
+The pre-existing Movie language endpoint returns Movie entities and was preserved under the instruction not to rewrite existing Movie functionality; all newly added endpoints return DTOs. Full examples and explanations are in [catalog-service/README.md](catalog-service/README.md).

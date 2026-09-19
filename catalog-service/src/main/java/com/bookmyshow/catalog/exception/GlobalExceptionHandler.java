@@ -12,6 +12,11 @@ import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
+    @ExceptionHandler(BusinessValidationException.class)
+    public ProblemDetail handleBusinessValidation(BusinessValidationException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+    }
+
     @ExceptionHandler(ResourceNotFoundException.class)
     public ProblemDetail handleNotFound(ResourceNotFoundException exception) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
@@ -21,6 +26,30 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ProblemDetail handleIntegrityConflict(DataIntegrityViolationException exception) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
                 "The operation conflicts with a database constraint.");
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleHandlerMethodValidationException(
+            org.springframework.web.method.annotation.HandlerMethodValidationException exception,
+            HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        if (exception.isForReturnValue()) {
+            return super.handleHandlerMethodValidationException(exception, headers, status, request);
+        }
+        Map<String, String> errors = new LinkedHashMap<>();
+        exception.getParameterValidationResults().forEach(result -> {
+            if (result instanceof org.springframework.validation.method.ParameterErrors fieldErrors) {
+                fieldErrors.getFieldErrors().forEach(error ->
+                        errors.putIfAbsent(error.getField(), error.getDefaultMessage()));
+            } else {
+                String name = result.getMethodParameter().getParameterName();
+                result.getResolvableErrors().forEach(error ->
+                        errors.putIfAbsent(name == null ? "parameter" : name, error.getDefaultMessage()));
+            }
+        });
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
+                "Request validation failed.");
+        problem.setProperty("errors", errors);
+        return handleExceptionInternal(exception, problem, headers, status, request);
     }
 
     @Override
