@@ -29,3 +29,9 @@ booking:
   expiration:
     enabled: true
     delay-ms: 30000
+
+security:
+  jwt:
+    public-key-location: ${JWT_PUBLIC_KEY_LOCATION}
+    issuer: ${JWT_ISSUER:bookmyshow-identity}
+    audience: ${JWT_AUDIENCE:bookmyshow-api}

@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: identity-service
+  datasource:
+    url: ${IDENTITY_DB_URL:jdbc:postgresql://localhost:5434/identity_db}
+    username: ${IDENTITY_DB_USERNAME:identity_user}
+    password: ${IDENTITY_DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+  mvc:
+    problemdetails:
+      enabled: true
+server:
+  port: ${IDENTITY_SERVER_PORT:8083}
+  error:
+    include-message: never
+    include-stacktrace: never
+security:
+  jwt:
+    public-key-location: ${JWT_PUBLIC_KEY_LOCATION}
+    issuer: ${JWT_ISSUER:bookmyshow-identity}
+    audience: ${JWT_AUDIENCE:bookmyshow-api}
+    private-key-location: ${JWT_PRIVATE_KEY_LOCATION}
+    access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:PT15M}

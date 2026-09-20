@@ -1,0 +1,4 @@
+# Local URI defaults are in application.yml; signing keys are never bundled.
+logging:
+  level:
+    com.bookmyshow.gateway: DEBUG

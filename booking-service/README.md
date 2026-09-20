@@ -1,5 +1,7 @@
 # Booking Service ? reservations and database concurrency
 
+Security update: Booking now independently validates RSA JWTs. Seat browsing remains public; seat initialization requires ADMIN; reservation/booking endpoints require USER or ADMIN. Set JWT_PUBLIC_KEY_LOCATION before startup, including dev. Authorization is currently role-level, not per-user ownership. See the [root security/setup guide](../README.md). Reservation/booking business behavior and migrations are unchanged.
+
 Java 17, Spring Boot 3.5.16, Spring Data JPA/Hibernate, PostgreSQL, Flyway, Bean Validation, record DTOs, JUnit/Mockito, and PostgreSQL Testcontainers. HTTP port: **8082**. Database: **booking_db**.
 
 ## Architecture and ownership
@@ -18,7 +20,7 @@ Booking Service (booking_db, HTTP 8082)
 
 Booking owns seat inventory because checking availability, taking/releasing ownership, and confirming a booking must commit together in one database transaction. Separate databases make ownership explicit and prevent one service depending on another service's schema.
 
-showId is a positive external identifier, not a JPA relationship or foreign key to Catalog. Booking never accesses Catalog tables and duplicates none of its Movie, Theater, Screen, or Show entities. Catalog can be offline while these APIs run. Show existence, active state, start time, Screen capacity/layout, and authorization are intentionally not validated here; a future explicit REST client can validate initialization against Catalog. No REST call to Catalog is implemented in this phase.
+showId is a positive external identifier, not a JPA relationship or foreign key to Catalog. Booking never accesses Catalog tables and duplicates none of its Movie, Theater, Screen, or Show entities. Catalog can be offline while these APIs run. Show existence, active state, start time, and Screen capacity/layout are intentionally not validated here; a future explicit REST client can validate initialization against Catalog. No REST call to Catalog is implemented in this phase.
 
 ## Start PostgreSQL with Podman
 
@@ -306,7 +308,7 @@ The barrier-controlled tests use independent threads, service-proxy transactions
 
 ## Deliberate limits
 
-No real payments, refunds, users/authentication, seat prices, Catalog HTTP validation, Kafka, Redis, Notification Service, API Gateway, Saga, Outbox, Kubernetes, or distributed Redis locks. Confirmation is an explicit simulation. References do not establish caller identity. Inventory initialization is an additive batch API, not a full replacement or externally authorized administration workflow.
+JWT authentication and role authorization are now provided by Identity/Gateway and this service. No real payments, refunds, seat prices, Catalog HTTP validation, Kafka, Redis, Notification Service, Saga, Outbox, Kubernetes, or distributed Redis locks. Confirmation is an explicit simulation. References do not establish caller identity. Inventory initialization is an additive batch API, not a full replacement or externally authorized administration workflow.
 
 No runtime database, container, or background application was left running for local use by this implementation; tests used disposable Testcontainers resources. Podman commands above are ready for the user to create the separate development database.
 

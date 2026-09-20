@@ -15,6 +15,8 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+@org.springframework.context.annotation.Import(com.bookmyshow.booking.security.SecurityConfiguration.class)
+@org.springframework.security.test.context.support.WithMockUser(roles = "ADMIN")
 @WebMvcTest({BookingController.class, ReservationController.class, ShowSeatController.class})
 class BookingControllerTest {
     @Autowired MockMvc mvc;

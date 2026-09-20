@@ -831,3 +831,154 @@ README.md
 ```
 
 Modified for this phase: pom.xml and EARLIER_ANSWERS.md.
+
+## 2026-09-20 - Identity Service and API Gateway
+
+Added independently runnable identity-service and api-gateway modules using Java 17 / Spring Boot 3.5.16. Gateway uses the compatible Spring Cloud 2025.0.3 BOM (Gateway 4.3.5). Existing Catalog and Booking business code, migrations, transactions and concurrency behavior were preserved; security was added at HTTP boundaries.
+
+Architecture: Client -> Gateway :8080 -> Identity :8083 / Catalog :8081 / Booking :8082. Identity owns identity_db (local PostgreSQL port 5434). No cross-database relationships exist. Gateway has no database.
+
+Identity V1__create_users.sql creates users with generated ID, unique normalized email, BCrypt hash, first/last names, USER/ADMIN role, active flag and audit timestamps. NOT NULL/CHECK constraints enforce normalized nonblank email, nonblank names, 60-character hash and allowed roles. Email uniqueness supplies the login index; primary key supports subject lookup. Flyway owns schema creation, Hibernate validates, and Open Session in View stays disabled.
+
+Registration validates input, normalizes email with Locale.ROOT, encodes BCrypt at cost 12, enforces the 72-byte UTF-8 limit and always assigns USER. It handles concurrent duplicate registration with the database constraint. Password DTO string representations redact credentials; responses never contain hashes. Login uses AuthenticationManager -> DaoAuthenticationProvider -> DatabaseUserDetailsService -> PasswordEncoder. Wrong/unknown/inactive credentials return generic 401. Token responses use no-store cache headers.
+
+JwtTokenService signs RS256 JWTs containing subject, role, issuer, audience, issued-at and expiration. Generation and validation are separate. Every service independently verifies signature, issuer, audience, expiration, numeric subject and allowed role. A regression test verifies malformed signed non-string role claims return 401. Spring's resource-server BearerTokenAuthenticationFilter supplies the OncePerRequestFilter behavior instead of a custom parser/filter. Servlet services use explicit STATELESS SecurityFilterChain; Gateway uses reactive security with no persisted security context/request cache.
+
+Public: POST register/login, Catalog GET browsing, GET show seats.
+USER/ADMIN: GET users/me and reservation/booking operations.
+ADMIN: Catalog writes, seat initialization and GET users/admin/status.
+Security errors use generic Problem Details (401/403); validation is 400 and duplicate email 409.
+
+Gateway gives Booking's /api/v1/shows/{showId}/seats route precedence over Catalog's /api/v1/shows/**, preserves paths/query strings and forwards the original bearer token. It strips X-User-Id, X-Role, X-Roles and X-Authorities. Downstream services never trust identity headers and independently validate tokens, including on direct requests.
+
+Only Identity receives the private key. All modules require JWT_PUBLIC_KEY_LOCATION; Identity also requires JWT_PRIVATE_KEY_LOCATION. No runtime secret/default key is committed. scripts/GenerateDevKeys.java creates a fresh 3072-bit RSA pair under gitignored .local/jwt and refuses overwrite. The helper was compiled successfully. Test-only public/private fixtures under test resources are not runtime defaults; executable JAR inspection confirmed test keys are excluded and Identity DevTools is absent.
+
+Deliberate limits: Booking remains role-level with no user ownership column/check, preserving its current domain. Any authenticated user knowing a reference can operate on it; owner-only access needs a future explicit migration and subject checks before real-user exposure. Disabling users stops login and /me but already-issued tokens may authorize other endpoints until expiration (15 minutes default). Role changes require a new token. No refresh/revocation/JWKS, social login, discovery or complex permissions were added. No Kafka, Redis, Payment/Notification Service, Saga, Outbox, Kubernetes or distributed locks were introduced.
+
+Verification on 2026-09-20: root mvn test passed before final claim hardening, then root mvn -Pintegration verify executed the final complete suite. Actual Surefire/Failsafe reports show:
+
+| Module | Unit/MVC/routing | PostgreSQL integration | Total |
+|---|---:|---:|---:|
+| catalog-service | 40 | 10 | 50 |
+| booking-service | 35 | 19 | 54 |
+| identity-service | 21 | 6 | 27 |
+| api-gateway | 8 | 0 | 8 |
+| Total | 104 | 35 | 139 |
+
+All tests passed with zero failures/errors/skips. No coverage tooling or H2 was used. PostgreSQL tests ran using Testcontainers, including existing Booking concurrency tests. Existing HTTP suites now supply valid signed ADMIN tokens instead of disabling security.
+
+Identity tests prove normalization/duplicates, BCrypt storage/limits, successful/wrong/inactive provider login, JWT generation/validation, public/protected access, USER/ADMIN permissions, malformed claims and PostgreSQL persistence/constraint/concurrent-registration flows. Gateway tests exercise the actual reactive stack with three ephemeral HTTP backends for routing, query preservation, seat-route precedence, role checks, forwarding and header stripping. This is not a four-live-service deployment test.
+
+An initial non-ASCII password fixture was corrupted by Windows shell encoding; constructing the character explicitly fixed the fixture. The final full run includes the later malformed-role regression test.
+
+Commands:
+- mvn test
+- mvn -Pintegration verify
+- mvn -pl identity-service test
+- mvn -pl identity-service -Pintegration verify
+- mvn -pl api-gateway test
+- mvn -pl catalog-service -Pintegration verify
+- mvn -pl booking-service -Pintegration verify
+
+Root README contains complete Podman identity database setup, local key generation and environment configuration, startup commands for all four modules, register/login/authenticated examples, administrator promotion for local learning, and explanations of BCrypt, JWT signature vs encryption, expiration, statelessness, SecurityContext, filter chains, 401/403 and trust boundaries. New service READMEs summarize their responsibilities. Persistent development containers/keys and a four-service deployment were not created during implementation.
+
+### Exact file inventory
+
+IDE-managed .idea/compiler.xml and .idea/encodings.xml changes were excluded and left untouched.
+
+Modified:
+
+```text
+EARLIER_ANSWERS.md
+README.md
+booking-service/README.md
+booking-service/pom.xml
+booking-service/src/main/resources/application.yml
+booking-service/src/test/java/com/bookmyshow/booking/BookingApiIT.java
+booking-service/src/test/java/com/bookmyshow/booking/BookingControllerTest.java
+catalog-service/README.md
+catalog-service/pom.xml
+catalog-service/src/main/resources/application.yml
+catalog-service/src/test/java/com/bookmyshow/catalog/CatalogApiIT.java
+catalog-service/src/test/java/com/bookmyshow/catalog/CatalogControllerTest.java
+catalog-service/src/test/java/com/bookmyshow/catalog/movie/MovieApiIT.java
+catalog-service/src/test/java/com/bookmyshow/catalog/movie/MovieControllerTest.java
+pom.xml
+```
+
+Created:
+
+```text
+.gitignore
+api-gateway/.gitignore
+api-gateway/README.md
+api-gateway/pom.xml
+api-gateway/src/main/java/com/bookmyshow/gateway/GatewayApplication.java
+api-gateway/src/main/java/com/bookmyshow/gateway/GatewayRoutes.java
+api-gateway/src/main/java/com/bookmyshow/gateway/IdentityHeaderFilter.java
+api-gateway/src/main/java/com/bookmyshow/gateway/security/JwtValidationConfiguration.java
+api-gateway/src/main/java/com/bookmyshow/gateway/security/SecurityConfiguration.java
+api-gateway/src/main/resources/application-dev.yml
+api-gateway/src/main/resources/application.yml
+api-gateway/src/test/java/com/bookmyshow/gateway/GatewaySecurityRoutingTest.java
+api-gateway/src/test/java/com/bookmyshow/gateway/TestTokens.java
+api-gateway/src/test/resources/application.properties
+api-gateway/src/test/resources/keys/test-private.pem
+api-gateway/src/test/resources/keys/test-public.pem
+booking-service/src/main/java/com/bookmyshow/booking/security/JwtValidationConfiguration.java
+booking-service/src/main/java/com/bookmyshow/booking/security/SecurityConfiguration.java
+booking-service/src/main/java/com/bookmyshow/booking/security/SecurityProblemSupport.java
+booking-service/src/test/java/com/bookmyshow/booking/DownstreamSecurityTest.java
+booking-service/src/test/java/com/bookmyshow/booking/TestTokens.java
+booking-service/src/test/resources/application.properties
+booking-service/src/test/resources/keys/test-private.pem
+booking-service/src/test/resources/keys/test-public.pem
+catalog-service/src/main/java/com/bookmyshow/catalog/security/JwtValidationConfiguration.java
+catalog-service/src/main/java/com/bookmyshow/catalog/security/SecurityConfiguration.java
+catalog-service/src/main/java/com/bookmyshow/catalog/security/SecurityProblemSupport.java
+catalog-service/src/test/java/com/bookmyshow/catalog/DownstreamSecurityTest.java
+catalog-service/src/test/java/com/bookmyshow/catalog/TestTokens.java
+catalog-service/src/test/resources/application.properties
+catalog-service/src/test/resources/keys/test-private.pem
+catalog-service/src/test/resources/keys/test-public.pem
+identity-service/.gitignore
+identity-service/README.md
+identity-service/pom.xml
+identity-service/src/main/java/com/bookmyshow/identity/IdentityServiceApplication.java
+identity-service/src/main/java/com/bookmyshow/identity/auth/AuthController.java
+identity-service/src/main/java/com/bookmyshow/identity/auth/AuthService.java
+identity-service/src/main/java/com/bookmyshow/identity/auth/dto/LoginRequest.java
+identity-service/src/main/java/com/bookmyshow/identity/auth/dto/RegisterRequest.java
+identity-service/src/main/java/com/bookmyshow/identity/auth/dto/TokenResponse.java
+identity-service/src/main/java/com/bookmyshow/identity/exception/BusinessValidationException.java
+identity-service/src/main/java/com/bookmyshow/identity/exception/DuplicateEmailException.java
+identity-service/src/main/java/com/bookmyshow/identity/exception/GlobalExceptionHandler.java
+identity-service/src/main/java/com/bookmyshow/identity/exception/ResourceNotFoundException.java
+identity-service/src/main/java/com/bookmyshow/identity/security/AuthenticationConfiguration.java
+identity-service/src/main/java/com/bookmyshow/identity/security/DatabaseUserDetailsService.java
+identity-service/src/main/java/com/bookmyshow/identity/security/JwtSigningConfiguration.java
+identity-service/src/main/java/com/bookmyshow/identity/security/JwtTokenService.java
+identity-service/src/main/java/com/bookmyshow/identity/security/JwtValidationConfiguration.java
+identity-service/src/main/java/com/bookmyshow/identity/security/SecurityConfiguration.java
+identity-service/src/main/java/com/bookmyshow/identity/security/SecurityProblemSupport.java
+identity-service/src/main/java/com/bookmyshow/identity/security/UserPrincipal.java
+identity-service/src/main/java/com/bookmyshow/identity/user/Role.java
+identity-service/src/main/java/com/bookmyshow/identity/user/User.java
+identity-service/src/main/java/com/bookmyshow/identity/user/UserController.java
+identity-service/src/main/java/com/bookmyshow/identity/user/UserRepository.java
+identity-service/src/main/java/com/bookmyshow/identity/user/UserService.java
+identity-service/src/main/java/com/bookmyshow/identity/user/dto/UserResponse.java
+identity-service/src/main/resources/application-dev.yml
+identity-service/src/main/resources/application.yml
+identity-service/src/main/resources/db/migration/V1__create_users.sql
+identity-service/src/test/java/com/bookmyshow/identity/IdentityApiIT.java
+identity-service/src/test/java/com/bookmyshow/identity/IdentitySecurityTest.java
+identity-service/src/test/java/com/bookmyshow/identity/TestTokens.java
+identity-service/src/test/java/com/bookmyshow/identity/auth/AuthServiceTest.java
+identity-service/src/test/java/com/bookmyshow/identity/security/AuthenticationProviderTest.java
+identity-service/src/test/java/com/bookmyshow/identity/security/JwtTokenServiceTest.java
+identity-service/src/test/resources/application.properties
+identity-service/src/test/resources/keys/test-private.pem
+identity-service/src/test/resources/keys/test-public.pem
+scripts/GenerateDevKeys.java
+```

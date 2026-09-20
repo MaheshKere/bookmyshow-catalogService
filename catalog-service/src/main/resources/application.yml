@@ -23,3 +23,9 @@ server:
   error:
     include-message: never
     include-stacktrace: never
+
+security:
+  jwt:
+    public-key-location: ${JWT_PUBLIC_KEY_LOCATION}
+    issuer: ${JWT_ISSUER:bookmyshow-identity}
+    audience: ${JWT_AUDIENCE:bookmyshow-api}

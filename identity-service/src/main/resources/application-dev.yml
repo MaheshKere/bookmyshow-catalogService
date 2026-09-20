@@ -1,0 +1,6 @@
+spring:
+  datasource:
+    url: "jdbc:postgresql://[::1]:5434/identity_db"
+    username: identity_user
+    password: identity_password
+# Key locations remain required environment variables; no shared development secret.

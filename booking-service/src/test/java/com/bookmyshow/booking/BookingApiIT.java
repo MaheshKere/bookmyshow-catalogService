@@ -60,6 +60,14 @@ class BookingApiIT {
     }
 
     @Autowired MockMvc mvc;
+    @Autowired org.springframework.web.context.WebApplicationContext webContext;
+
+    @BeforeEach void authenticateRequests() {
+        mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup(webContext)
+                .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity())
+                .defaultRequest(get("/").header("Authorization", "Bearer " + com.bookmyshow.booking.TestTokens.token("ADMIN")))
+                .build();
+    }
     @Autowired ObjectMapper mapper;
     @Autowired ShowSeatService seatService;
     @Autowired ReservationService reservations;

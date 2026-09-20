@@ -1,5 +1,7 @@
 ﻿# Catalog Service — Movie iteration
 
+Security update: Catalog now independently validates RSA JWTs. GET browsing remains public; catalog writes require ADMIN. Set JWT_PUBLIC_KEY_LOCATION before startup, including dev. See the [root security/setup guide](../README.md). Existing business APIs and migrations are unchanged.
+
 Java 17, Spring Boot 3.5.16, Maven, PostgreSQL, JPA/Hibernate, Flyway.
 
 ## Run
@@ -101,7 +103,7 @@ V1__create_movies.sql defines the table, identity primary key, bounded columns, 
 
 A sequence generator can support better insert batching than IDENTITY; simplicity wins for this iteration. An interface plus service implementation or MapStruct could become useful with greater complexity, but is unnecessary here. Database-generated timestamps or Spring Data auditing are alternatives to entity callbacks. Soft deletion and @Version-based lost-update protection are deliberate future design choices, not implemented implicitly. Current PUT is last-writer-wins.
 
-The Theater, Screen, and Show extension is documented below. Seat inventory, security, messaging, caching, gateway, booking, payment, and Kubernetes remain outside this iteration.
+The Theater, Screen, and Show extension is documented below. Seat inventory is owned by Booking. JWT security and Gateway routing are documented in the root README; messaging, caching, payment, and Kubernetes remain deferred.
 
 ## Interview questions
 

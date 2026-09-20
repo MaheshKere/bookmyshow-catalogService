@@ -14,5 +14,7 @@
     <modules>
         <module>catalog-service</module>
         <module>booking-service</module>
+        <module>identity-service</module>
+        <module>api-gateway</module>
     </modules>
 </project>
