@@ -982,3 +982,327 @@ identity-service/src/test/resources/keys/test-private.pem
 identity-service/src/test/resources/keys/test-public.pem
 scripts/GenerateDevKeys.java
 ```
+
+---
+
+## 2026-09-25 - Payment Service, Kafka, and reliable event-driven booking
+
+This entry explains the implementation requested in the Payment/Kafka prompt. It records what changed, how the code works, why the transaction and concurrency choices matter, and how to run and verify the result. Earlier entries above remain historical records. The existing plural history file is EARLIER_ANSWERS.md; on this Windows filesystem, Earlier_Answers.md refers to this same file. The separate Earlier_answer.md from the preceding task remains available as a compact change inventory.
+
+### What changed from the previous phase
+
+Previously, Booking created a PENDING booking and exposed an HTTP confirmation action that simulated successful payment. There was no Payment Service and no durable message exchange. Now creation records a payment request atomically, an independent Payment Service processes that request, and a payment-result event drives confirmation or cancellation. Catalog and Identity implementations remain unchanged. Booking's existing reservation and seat lifecycle is extended rather than replaced; Gateway gains one additional route.
+
+The root pom.xml adds payment-service to the Maven reactor. Booking adds Spring Kafka and Kafka Testcontainers dependencies. Payment follows the existing Java 17 / Spring Boot 3.5.16 module structure and dependencies for MVC, JPA, PostgreSQL, Flyway, Bean Validation, JWT resource-server security, JUnit and Testcontainers.
+
+### How the implementation is organized
+
+| Code area | Responsibility and reason |
+|---|---|
+| Payment, PaymentStatus, PaymentRepository | Payment-owned JPA aggregate with unique booking/payment references, amount/currency, authenticated subject, PENDING/SUCCESS/FAILED, audit timestamps and optimistic version. It has no Booking entity relationship. |
+| PaymentProcessor and MockPaymentProcessor | A provider-independent boundary with deterministic results. Tests can exercise both outcomes without a real provider or random behavior. |
+| PaymentService.accept | In one transaction: claim the incoming event, serialize requests for the booking, check existing payment data, process one new payment, and append its result to the Payment outbox. |
+| PaymentController and PaymentService.get | Read a payment by booking reference only for its authenticated JWT subject. Return a DTO, never the JPA entity; return 404 for another subject's payment. |
+| PaymentEvent and EventCodec in each service | Explicit v1 JSON contract, serialization and validation, including schema version and agreement between Kafka key and booking reference. The services keep independent contract types, not a shared persistence model. |
+| EventStore in each service | Append outbox events and claim inbox event IDs. MANDATORY transaction propagation requires the calling business transaction to exist. |
+| OutboxPublisher and OutboxScheduler in each service | Poll committed pending events and send them in separate transactions. Mark a row published only after Kafka acknowledgement. A failed attempt keeps the row eligible for retry. |
+| BookingCreatedListener | Decode a Kafka request and call the transactional Payment service through its Spring proxy. |
+| PaymentResultListener and PaymentResultHandler | Decode a result, durably deduplicate it, validate its correlation data and invoke the existing Booking lifecycle. |
+| KafkaConfiguration | Declare the two source topics and their DLTs, and install bounded retry plus dead-letter recovery. |
+| SecurityConfiguration, JwtValidationConfiguration, SecurityProblemSupport | Apply the existing downstream JWT/public-key validation and consistent authentication/authorization errors to Payment. |
+| GatewayRoutes and Gateway security | Route Payment requests and independently validate JWTs while retaining earlier route precedence and access rules. |
+
+BookingController now supplies the verified JWT subject when creating a booking. BookingService.create still locks the Reservation and returns the original Booking on a repeated creation request. For a new booking it verifies the hold, locks its held seats to calculate the mock fare, rechecks the deadline, saves the payment metadata and writes BookingCreated to the outbox in the same transaction.
+
+Booking gains subject, amount and currency fields. Existing Reservation/Booking statuses and seat ownership/version rules remain intact. Reservation deadlines are normalized to microseconds because PostgreSQL stores timestamps at that precision; comparing a nanosecond Java timestamp with its database-reloaded value could otherwise reject a legitimate result.
+
+### Why the database transaction and Kafka send are separate
+
+Sending directly after a booking commit creates a loss window: the application could crash after saving the booking but before sending the message. Sending before the database commit creates the opposite problem: another service might act on a booking transaction that later rolls back.
+
+The outbox closes that gap by recording the intent to publish alongside business state in PostgreSQL. JdbcTemplate joins the same DataSource transaction as JPA through the service's transaction manager. Either both the state and event are committed, or neither is committed.
+
+The publisher is a separate Spring bean so each scheduled call crosses a transaction proxy. It selects one row with FOR UPDATE SKIP LOCKED, waits for Kafka acknowledgement, updates published_at and commits. SKIP LOCKED allows another publisher instance to work on a different row without waiting for that lock. The scheduler processes a bounded batch and retries pending records in later sweeps.
+
+A crash after Kafka accepted the event but before the database marks it published still causes duplicate delivery. Kafka producer idempotence cannot make the PostgreSQL commit and Kafka acknowledgement one atomic operation. Durable consumer idempotency is therefore required on both sides. This implementation deliberately does not introduce XA transactions.
+
+### How duplicate delivery and concurrency are handled
+
+There are two different duplicate cases: the same eventId arriving again, and a second eventId describing the same booking operation.
+
+For the first case, consumed_events has a primary key on event_id. INSERT ON CONFLICT DO NOTHING identifies a committed replay and safely coordinates concurrent attempts. The inbox claim is part of the business transaction: a processing failure rolls it back so retry remains possible.
+
+For the second case, Payment takes a transaction-scoped PostgreSQL advisory lock derived from bookingReference, then checks for an existing payment. A matching request is harmless; mismatched subject, amount, currency or deadline is rejected. UNIQUE(payments.booking_reference) is the final database guard. A hash collision only serializes unrelated bookings; it does not combine their data.
+
+Booking keeps its established Reservation lock as the serialization point. The handler checks result metadata and records one terminal payment result per booking in booking_payment_results, with a unique payment reference. A matching result is harmless even under a new eventId. A contradictory result cannot reverse the earlier outcome.
+
+This does not change the existing ordering of Reservation and seat locks or replace pessimistic locking with Kafka. Kafka coordinates services; PostgreSQL still protects the local seat-allocation invariants.
+
+### What happens during failures
+
+- If Booking rolls back, neither its new Booking nor its outbox request commits.
+- If Kafka is unavailable to a publisher, the outbox row remains pending and is retried.
+- If Payment processing rolls back, its inbox claim, Payment changes and result outbox roll back together.
+- If a consumer commits its database transaction but crashes before committing its Kafka offset, redelivery becomes an idempotent no-op.
+- If a transient database error occurs, the consumer retries twice after the initial attempt, then routes the record to its DLT.
+- A malformed or permanently invalid event goes directly to the DLT; a duplicate is successful processing, not an error.
+- If DLT publication fails, the source is not acknowledged. Retrying recovery is necessary to avoid losing the failed record.
+- A successful payment received after cancellation or hold expiration cannot reclaim seats. It is rejected to the DLT for reconciliation. No automatic refund is implemented.
+
+### Schema changes
+Booking V1 is unchanged. New V2__payment_events.sql adds nullable legacy-compatible subject/amount/currency columns to bookings, outbox_events with unique event_id and pending index, consumed_events keyed by event_id, and booking_payment_results keyed by booking reference with unique payment reference.
+
+Payment V1__payments_and_events.sql creates payments with unique payment and booking references, status/amount/currency checks and version, plus independent outbox_events and consumed_events tables. No Catalog/Identity schema changed.
+
+### Architecture, contracts, lifecycle, local commands and verification
+
+```text
+Client -> Gateway :8080 -> Identity :8083 -> identity_db :5434
+                      -> Catalog  :8081 -> catalog_db  :5432
+                      -> Booking  :8082 -> booking_db  :5433
+                      -> Payment  :8084 -> payment_db  :5435
+
+Booking transaction [PENDING booking + BookingCreated outbox]
+ -> publisher -> Kafka -> Payment transaction
+    [inbox claim + Payment PENDING -> SUCCESS/FAILED + result outbox]
+ -> publisher -> Kafka -> Booking transaction
+    [inbox claim + payment result + booking/reservation/seat transition]
+```
+
+The existing implementations and separate databases remain intact. Payment shares no Booking entity, table or database connection. Root Maven remains an aggregator; each service independently inherits the existing Boot parent.
+
+### Topics and contracts
+
+| Topic (3 partitions, local replication factor 1) | Producer | Consumer |
+|---|---|---|
+| bookmyshow.booking.created.v1 | Booking outbox | Payment, group payment-service-v1 |
+| bookmyshow.payment.results.v1 | Payment outbox | Booking, group booking-service-v1 |
+| bookmyshow.booking.created.v1.DLT | Payment error handler | Manual investigation/replay |
+| bookmyshow.payment.results.v1.DLT | Booking error handler | Manual investigation/replay |
+
+Success and failure share the results topic. All messages use bookingReference as their Kafka key. Kafka ordering is **within a partition**, not global or across topics. Stable keys put records for one booking in the same partition. Changing partition counts can change that mapping. This phase emits one request and one terminal result per booking; future multi-event aggregates also require publication sequencing across outbox workers.
+
+PaymentEvent is an explicit JSON record maintained locally in both services, without shared domain entities or Java polymorphic type headers. Required fields are eventId (UUID), schemaVersion (1), eventType, bookingReference, subject, decimal amount, currency (INR), occurredAt and expiresAt (UTC). paymentReference is null for BookingCreated and required for PaymentSucceeded/PaymentFailed. Consumers validate Bean Validation constraints, version, type and key/reference agreement. Booking also compares result subject, amount, currency and deadline with its persisted data. Breaking changes require a new contract/topic version.
+
+```json
+{
+  "eventId": "118bfb2a-42d7-48ec-829a-433b6a2e239b",
+  "schemaVersion": 1,
+  "eventType": "BookingCreated",
+  "bookingReference": "73d895ff-18d8-42bc-b4a1-2014ec3bbad7",
+  "subject": "1",
+  "amount": 100.00,
+  "currency": "INR",
+  "paymentReference": null,
+  "occurredAt": "2030-01-01T10:00:00Z",
+  "expiresAt": "2030-01-01T10:05:00Z"
+}
+```
+
+### Payment lifecycle and security
+
+1. Booking creation derives subject from the verified JWT, never a client-supplied user ID/header. Because Catalog has no pricing model, the server uses a **learning-only INR 100 per reserved seat**. Creation atomically saves PENDING and the request outbox row.
+2. Seats remain HELD with their existing five-minute deadline. Creating an event does not complete a booking.
+3. Payment owns its ID/reference, booking reference, subject, amount/currency, status, audit timestamps and optimistic version. Its provider-independent PaymentProcessor mock succeeds for unexpired amounts below INR 1000. Totals of INR 1000 or more, or already-expired requests, fail. Reserve ten seats to exercise deterministic failure. PENDING is an internal transition; the mock completes in the same transaction.
+4. Payment persists its terminal state, durable inbox claim and result outbox together.
+5. PaymentSucceeded invokes the existing Reservation-first, ascending-seat locking lifecycle, rechecks expiration after lock waits, confirms Booking/Reservation and marks seats BOOKED.
+6. PaymentFailed cancels a pending Booking/Reservation and releases held seats. Matching replays are harmless; contradictory terminal results are permanent failures.
+7. HTTP POST /api/v1/bookings/{reference}/confirm returns 409. Internal confirmation remains available to the payment consumer and lifecycle tests.
+8. Success arriving after expiration/cancellation cannot reclaim released seats. It goes to the DLT for manual reconciliation. Payment success and Booking confirmation are distinct facts; automated refunds are deferred.
+
+GET /api/v1/payments/booking/{bookingReference} requires USER/ADMIN and independently validates the same RS256 signature, issuer, audience, expiry, subject and role as existing services. Only the payment's JWT subject can read it; another subject receives 404, including ADMIN. Gateway independently validates the bearer token and routes /api/v1/payments/**, preserving the existing seat route precedence. Payment receives only the public key. No JWT or private key travels in an event.
+
+Booking/Reservation APIs retain their existing role-level access limitation. Recording the initiating payment subject does not implement reservation ownership. Migrated old Bookings have null payment metadata and produce no retroactive events; their pending reservations can expire/cancel normally. Deadlines are normalized to PostgreSQL microsecond precision for stable event comparisons.
+
+### Transactional outbox, idempotency and retries
+
+JPA state changes and JDBC inbox/outbox writes share the same service-owned DataSource and PostgreSQL transaction. Failure rolls all of them back. There is no XA transaction between Kafka and PostgreSQL.
+
+The scheduler locks one unpublished row with FOR UPDATE SKIP LOCKED, sends the stored JSON using the booking key, waits for broker acknowledgement, marks published_at, and commits. Kafka producer idempotence and acks=all are enabled. A failed send leaves the record pending for a later sweep. A crash after send but before database commit can duplicate publication with the same eventId. This is **at-least-once delivery**, not end-to-end exactly once. Waiting for Kafka holds a database transaction; this is a throughput tradeoff for explicit, readable behavior. Outbox outages retry durably rather than discard events.
+
+The inbox primary key is consumed_events.event_id. INSERT ON CONFLICT DO NOTHING coordinates concurrent duplicate claims; the claim only commits with business processing. Payment additionally uses a transaction-scoped PostgreSQL advisory lock by booking reference and UNIQUE(payments.booking_reference), preventing duplicate processing even for different event IDs. Booking serializes on the Reservation and stores one booking_payment_results row per booking, with a unique payment reference. A matching result is a no-op; a conflicting result is rejected. Inbox and outbox records survive restarts and are retained in this phase.
+
+Kafka offsets advance after the service transaction returns. Transient database/lock failures get two retries one second apart (three total attempts). Permanent contract/business failures go directly to the source topic's .DLT. Duplicates return normally. DLT publication preserves the source partition and must succeed before recovery is acknowledged. If the DLT broker is unavailable, recovery remains unacknowledged and retries later: bounded business retries must not silently lose the record.
+
+There is no automatic DLT replay loop. Inspect the cause and current lifecycle before deliberately republishing the original key/JSON with its eventId to the original topic. Recovery lets later source records proceed, so replay is not guaranteed to restore original business ordering. Logs include eventId, bookingReference and paymentReference where available, without credentials.
+
+Reference: Spring Kafka [DefaultErrorHandler and DeadLetterPublishingRecoverer](https://docs.spring.io/spring-kafka/reference/3.3-SNAPSHOT/kafka/annotation-error-handling.html).
+
+### Exact local commands: Windows and Podman
+
+From the repository root, start Podman only if stopped. Reuse the existing Catalog, Booking and Identity databases.
+
+```powershell
+podman machine start
+podman volume create payment_pgdata
+podman run --name payment-postgres -d -p 5435:5432 -e POSTGRES_DB=payment_db -e POSTGRES_USER=payment_user -e POSTGRES_PASSWORD=payment_password -v payment_pgdata:/var/lib/postgresql/data docker.io/library/postgres:17-alpine
+podman exec payment-postgres pg_isready -U payment_user -d payment_db
+
+podman run --name bookmyshow-kafka -d -p 9092:9092 docker.io/apache/kafka:3.9.1
+podman exec bookmyshow-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+```
+
+Wait until topic listing succeeds. This uses the official [single-node KRaft image](https://kafka.apache.org/39/getting-started/docker/) through Podman, without ZooKeeper. Stop/start preserves this Kafka container's writable layer, but deleting/recreating it loses broker data and offsets. Outbox rows already marked published are not an automatic backup of lost broker data.
+
+For existing stopped containers, use:
+
+```powershell
+podman start payment-postgres bookmyshow-kafka
+```
+
+Start earlier database containers using their existing names; original creation instructions remain in their module READMEs. In every service terminal, configure the same public key (generate once with java scripts/GenerateDevKeys.java only if keys do not already exist):
+
+```powershell
+$env:JWT_PUBLIC_KEY_LOCATION = 'file:///' + (Resolve-Path .local/jwt/public.pem).Path.Replace('\', '/')
+$env:JWT_ISSUER = 'bookmyshow-identity'
+$env:JWT_AUDIENCE = 'bookmyshow-api'
+```
+
+In Booking and Payment terminals:
+
+```powershell
+$env:KAFKA_BOOTSTRAP_SERVERS = 'localhost:9092'
+```
+
+Payment configuration variables, with their defaults except the required non-dev password:
+
+```powershell
+$env:PAYMENT_DB_URL = 'jdbc:postgresql://localhost:5435/payment_db'
+$env:PAYMENT_DB_USERNAME = 'payment_user'
+$env:PAYMENT_DB_PASSWORD = 'payment_password'
+$env:PAYMENT_SERVER_PORT = '8084'
+```
+
+The explicitly selected dev profile supplies the same local database credentials. In Gateway, its default route can be overridden with:
+
+```powershell
+$env:PAYMENT_SERVICE_URL = 'http://localhost:8084'
+```
+
+Only Identity receives the private key:
+
+```powershell
+$env:JWT_PRIVATE_KEY_LOCATION = 'file:///' + (Resolve-Path .local/jwt/private.pem).Path.Replace('\', '/')
+```
+
+Start databases and Kafka first, then run each command in its own configured terminal. Flyway runs at service startup; KafkaAdmin creates the four topics.
+
+```powershell
+mvn -pl identity-service spring-boot:run "-Dspring-boot.run.profiles=dev"
+mvn -pl catalog-service spring-boot:run "-Dspring-boot.run.profiles=dev"
+mvn -pl payment-service spring-boot:run "-Dspring-boot.run.profiles=dev"
+mvn -pl booking-service spring-boot:run "-Dspring-boot.run.profiles=dev"
+mvn -pl api-gateway spring-boot:run "-Dspring-boot.run.profiles=dev"
+```
+
+After login and reservation creation, capture the reservation response in $reservation and use:
+
+```powershell
+$body = @{ reservationReference = $reservation.reservationReference } | ConvertTo-Json
+$booking = Invoke-RestMethod "$base/api/v1/bookings" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+Invoke-RestMethod "$base/api/v1/bookings/$($booking.bookingReference)" -Headers $headers
+Invoke-RestMethod "$base/api/v1/payments/booking/$($booking.bookingReference)" -Headers $headers
+```
+
+Payment may initially return 404 before asynchronous processing; poll again. Booking initially returns PENDING, then CONFIRMED or CANCELLED. Inspect topics/DLT:
+
+```powershell
+podman exec bookmyshow-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe
+podman exec bookmyshow-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic bookmyshow.payment.results.v1.DLT --from-beginning --property print.key=true
+```
+
+### Tests and remaining limitations
+
+```powershell
+mvn test
+mvn -Pintegration verify
+```
+
+The complete verify command runs every module's tests, including disposable real PostgreSQL and Kafka Testcontainers. No external application database or Kafka is required, only a working Docker-compatible Podman API and image downloads. Tests do not silently skip without the engine. They cover rollback, duplicate delivery, publication/replay, retry success and exhaustion, DLT, payment/security/routing, invalid transitions and seat concurrency.
+
+This phase does **not** implement real payment gateway integration, Notification Service, Redis, a Saga orchestration framework, Kubernetes, or production Kafka cluster configuration. Also deferred: automated refunds/reconciliation, real pricing, reservation ownership, outbox/inbox cleanup, DLT tooling, Kafka TLS/SASL/ACLs, monitoring, multi-node replication and schema registry. Local Kafka is a trusted development boundary; HTTP JWT validation does not authenticate Kafka producers. A real provider adapter needs provider idempotency, webhook verification and recovery for ambiguous network outcomes; simply replacing the mock with a synchronous SDK call inside this transaction is insufficient.
+
+The file inventory is included below; Earlier_answer.md retains the compact phase summary.
+### Current phase verification
+
+Final root mvn -Pintegration verify completed with BUILD SUCCESS on 2026-09-25 at 20:59 IST. All 165 tests passed, with zero failures, errors or skips. Disposable PostgreSQL and Kafka containers were used; no persistent development service was started. Initial sandbox access and one later transient Podman connection failure were resolved by elevated reruns. Maven reports and the final reactor log confirm all five modules succeeded.
+
+| Module | Unit / MVC / security / routing | PostgreSQL / Kafka integration | Total |
+|---|---:|---:|---:|
+| catalog-service | 40 | 10 | 50 |
+| booking-service | 35 | 28 | 63 |
+| identity-service | 21 | 6 | 27 |
+| api-gateway | 9 | 0 | 9 |
+| payment-service | 6 | 10 | 16 |
+| **Total** | **111** | **54** | **165** |
+
+
+### Complete file inventory
+
+The following files were added or edited for this phase. The earlier phase also created Earlier_answer.md. This follow-up appends the complete explanation to EARLIER_ANSWERS.md without changing its previous entries. Pre-existing scripts/.local and concurrent IDE metadata changes are not part of the implementation.
+- [api-gateway/src/main/java/com/bookmyshow/gateway/GatewayRoutes.java](api-gateway/src/main/java/com/bookmyshow/gateway/GatewayRoutes.java)
+- [api-gateway/src/main/java/com/bookmyshow/gateway/security/SecurityConfiguration.java](api-gateway/src/main/java/com/bookmyshow/gateway/security/SecurityConfiguration.java)
+- [api-gateway/src/main/resources/application.yml](api-gateway/src/main/resources/application.yml)
+- [api-gateway/src/test/java/com/bookmyshow/gateway/GatewaySecurityRoutingTest.java](api-gateway/src/test/java/com/bookmyshow/gateway/GatewaySecurityRoutingTest.java)
+- [booking-service/pom.xml](booking-service/pom.xml)
+- [booking-service/README.md](booking-service/README.md)
+- [booking-service/src/main/java/com/bookmyshow/booking/booking/Booking.java](booking-service/src/main/java/com/bookmyshow/booking/booking/Booking.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/booking/BookingController.java](booking-service/src/main/java/com/bookmyshow/booking/booking/BookingController.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/booking/BookingService.java](booking-service/src/main/java/com/bookmyshow/booking/booking/BookingService.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/EventCodec.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/EventCodec.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/EventStore.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/EventStore.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/KafkaConfiguration.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/KafkaConfiguration.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/OutboxPublisher.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/OutboxPublisher.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/OutboxScheduler.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/OutboxScheduler.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/PaymentEvent.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/PaymentEvent.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/PaymentResultHandler.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/PaymentResultHandler.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/PaymentResultListener.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/PaymentResultListener.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/PermanentEventException.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/PermanentEventException.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/reservation/Reservation.java](booking-service/src/main/java/com/bookmyshow/booking/reservation/Reservation.java)
+- [booking-service/src/main/resources/application.yml](booking-service/src/main/resources/application.yml)
+- [booking-service/src/main/resources/db/migration/V2__payment_events.sql](booking-service/src/main/resources/db/migration/V2__payment_events.sql)
+- [booking-service/src/test/java/com/bookmyshow/booking/booking/BookingServiceTest.java](booking-service/src/test/java/com/bookmyshow/booking/booking/BookingServiceTest.java)
+- [booking-service/src/test/java/com/bookmyshow/booking/BookingApiIT.java](booking-service/src/test/java/com/bookmyshow/booking/BookingApiIT.java)
+- [booking-service/src/test/java/com/bookmyshow/booking/BookingControllerTest.java](booking-service/src/test/java/com/bookmyshow/booking/BookingControllerTest.java)
+- [booking-service/src/test/java/com/bookmyshow/booking/BookingKafkaIT.java](booking-service/src/test/java/com/bookmyshow/booking/BookingKafkaIT.java)
+- [booking-service/src/test/resources/application.properties](booking-service/src/test/resources/application.properties)
+- [payment-service/.gitignore](payment-service/.gitignore)
+- [payment-service/pom.xml](payment-service/pom.xml)
+- [payment-service/README.md](payment-service/README.md)
+- [payment-service/src/main/java/com/bookmyshow/payment/messaging/BookingCreatedListener.java](payment-service/src/main/java/com/bookmyshow/payment/messaging/BookingCreatedListener.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/messaging/EventCodec.java](payment-service/src/main/java/com/bookmyshow/payment/messaging/EventCodec.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/messaging/EventStore.java](payment-service/src/main/java/com/bookmyshow/payment/messaging/EventStore.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/messaging/KafkaConfiguration.java](payment-service/src/main/java/com/bookmyshow/payment/messaging/KafkaConfiguration.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/messaging/OutboxPublisher.java](payment-service/src/main/java/com/bookmyshow/payment/messaging/OutboxPublisher.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/messaging/OutboxScheduler.java](payment-service/src/main/java/com/bookmyshow/payment/messaging/OutboxScheduler.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/messaging/PaymentEvent.java](payment-service/src/main/java/com/bookmyshow/payment/messaging/PaymentEvent.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/messaging/PermanentEventException.java](payment-service/src/main/java/com/bookmyshow/payment/messaging/PermanentEventException.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/payment/MockPaymentProcessor.java](payment-service/src/main/java/com/bookmyshow/payment/payment/MockPaymentProcessor.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/payment/Payment.java](payment-service/src/main/java/com/bookmyshow/payment/payment/Payment.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentController.java](payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentController.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentProcessor.java](payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentProcessor.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentRepository.java](payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentRepository.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentService.java](payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentService.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentStatus.java](payment-service/src/main/java/com/bookmyshow/payment/payment/PaymentStatus.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/PaymentServiceApplication.java](payment-service/src/main/java/com/bookmyshow/payment/PaymentServiceApplication.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/security/JwtValidationConfiguration.java](payment-service/src/main/java/com/bookmyshow/payment/security/JwtValidationConfiguration.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/security/SecurityConfiguration.java](payment-service/src/main/java/com/bookmyshow/payment/security/SecurityConfiguration.java)
+- [payment-service/src/main/java/com/bookmyshow/payment/security/SecurityProblemSupport.java](payment-service/src/main/java/com/bookmyshow/payment/security/SecurityProblemSupport.java)
+- [payment-service/src/main/resources/application.yml](payment-service/src/main/resources/application.yml)
+- [payment-service/src/main/resources/application-dev.yml](payment-service/src/main/resources/application-dev.yml)
+- [payment-service/src/main/resources/db/migration/V1__payments_and_events.sql](payment-service/src/main/resources/db/migration/V1__payments_and_events.sql)
+- [payment-service/src/test/java/com/bookmyshow/payment/EventCodecTest.java](payment-service/src/test/java/com/bookmyshow/payment/EventCodecTest.java)
+- [payment-service/src/test/java/com/bookmyshow/payment/PaymentDomainTest.java](payment-service/src/test/java/com/bookmyshow/payment/PaymentDomainTest.java)
+- [payment-service/src/test/java/com/bookmyshow/payment/PaymentKafkaIT.java](payment-service/src/test/java/com/bookmyshow/payment/PaymentKafkaIT.java)
+- [payment-service/src/test/java/com/bookmyshow/payment/PaymentSecurityTest.java](payment-service/src/test/java/com/bookmyshow/payment/PaymentSecurityTest.java)
+- [payment-service/src/test/java/com/bookmyshow/payment/TestTokens.java](payment-service/src/test/java/com/bookmyshow/payment/TestTokens.java)
+- [payment-service/src/test/resources/application.properties](payment-service/src/test/resources/application.properties)
+- [payment-service/src/test/resources/keys/test-private.pem](payment-service/src/test/resources/keys/test-private.pem)
+- [payment-service/src/test/resources/keys/test-public.pem](payment-service/src/test/resources/keys/test-public.pem)
+- [pom.xml](pom.xml)
+- [README.md](README.md)
+- [Earlier_answer.md](Earlier_answer.md)
+
+- [EARLIER_ANSWERS.md](EARLIER_ANSWERS.md): this follow-up explanation; documentation only.
+
+The test results above are from the completed implementation run. Tests were not rerun for this documentation-only follow-up.
