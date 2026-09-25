@@ -29,6 +29,19 @@ public class Booking {
     @Column(nullable = false)
     private Instant updatedAt;
 
+    @Column(length = 100)
+    private String subject;
+    @Column(precision = 12, scale = 2)
+    private java.math.BigDecimal amount;
+    @Column(length = 3)
+    private String currency;
+
+    public void requestPayment(String subject, java.math.BigDecimal amount) {
+        this.subject = subject;
+        this.amount = amount;
+        this.currency = "INR";
+    }
+
     public Booking(com.bookmyshow.booking.reservation.Reservation reservation) {
         this.bookingReference = java.util.UUID.randomUUID().toString();
         this.reservation = reservation;

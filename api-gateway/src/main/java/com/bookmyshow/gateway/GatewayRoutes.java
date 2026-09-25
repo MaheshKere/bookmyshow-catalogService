@@ -11,8 +11,10 @@ public class GatewayRoutes {
     RouteLocator routes(RouteLocatorBuilder builder,
                         @Value("${downstream.identity-url}") String identity,
                         @Value("${downstream.catalog-url}") String catalog,
-                        @Value("${downstream.booking-url}") String booking) {
+                        @Value("${downstream.booking-url}") String booking,
+                        @Value("${downstream.payment-url}") String payment) {
         return builder.routes()
+                .route("payment", route -> route.path("/api/v1/payments/**").uri(payment))
                 .route("identity", route -> route.path("/api/v1/auth/**", "/api/v1/users/**").uri(identity))
                 // More specific than Catalog's /shows/**: preserve existing seat endpoints.
                 .route("booking-seats", route -> route.order(-10).path("/api/v1/shows/{showId}/seats").uri(booking))

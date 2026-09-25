@@ -52,18 +52,18 @@ class BookingControllerTest {
                 .content("{\"showId\":100,\"seatIds\":[1]}")).andExpect(status().isBadRequest());
     }
     @Test void mapsBusinessAndDatabaseConflicts() throws Exception {
-        when(bookings.confirm("ref")).thenThrow(new ConflictException("Reservation expired"));
+
         mvc.perform(post("/api/v1/bookings/ref/confirm")).andExpect(status().isConflict())
-                .andExpect(jsonPath("$.detail").value("Reservation expired"));
+                .andExpect(jsonPath("$.detail").value("Confirmation is driven by PaymentSucceeded events"));
         when(seats.initialize(anyLong(), any())).thenThrow(new DataIntegrityViolationException("private SQL"));
         mvc.perform(post("/api/v1/shows/100/seats").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"seatNumbers\":[\"A1\"]}")).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail").value("The operation conflicts with a database constraint."));
     }
     @Test void mapsOptimisticAndPessimisticConflictsTo409() throws Exception {
-        when(bookings.confirm("ref")).thenThrow(new OptimisticLockingFailureException("stale"));
-        mvc.perform(post("/api/v1/bookings/ref/confirm")).andExpect(status().isConflict());
-        doThrow(new CannotAcquireLockException("timeout")).when(bookings).confirm("ref");
-        mvc.perform(post("/api/v1/bookings/ref/confirm")).andExpect(status().isConflict());
+        when(bookings.cancel("ref")).thenThrow(new OptimisticLockingFailureException("stale"));
+        mvc.perform(post("/api/v1/bookings/ref/cancel")).andExpect(status().isConflict());
+        doThrow(new CannotAcquireLockException("timeout")).when(bookings).cancel("ref");
+        mvc.perform(post("/api/v1/bookings/ref/cancel")).andExpect(status().isConflict());
     }
 }

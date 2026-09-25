@@ -32,7 +32,7 @@ public class Reservation {
         this.reservationReference = java.util.UUID.randomUUID().toString();
         this.showId = showId;
         this.status = ReservationStatus.ACTIVE;
-        this.expiresAt = expiresAt;
+        this.expiresAt = expiresAt.truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     }
 
     public void requireActive(Instant now) {

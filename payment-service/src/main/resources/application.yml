@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: payment-service
+  datasource:
+    url: ${PAYMENT_DB_URL:jdbc:postgresql://localhost:5435/payment_db}
+    username: ${PAYMENT_DB_USERNAME:payment_user}
+    password: ${PAYMENT_DB_PASSWORD}
+    hikari:
+      connection-init-sql: "SET lock_timeout TO '5s'"
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+  mvc:
+    problemdetails:
+      enabled: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.records: 10
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 8000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    listener:
+      ack-mode: record
+server:
+  port: ${PAYMENT_SERVER_PORT:8084}
+  error:
+    include-message: never
+    include-stacktrace: never
+security:
+  jwt:
+    public-key-location: ${JWT_PUBLIC_KEY_LOCATION}
+    issuer: ${JWT_ISSUER:bookmyshow-identity}
+    audience: ${JWT_AUDIENCE:bookmyshow-api}

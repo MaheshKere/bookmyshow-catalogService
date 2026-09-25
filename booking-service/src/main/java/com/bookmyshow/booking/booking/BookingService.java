@@ -2,6 +2,10 @@ package com.bookmyshow.booking.booking;
 
 import com.bookmyshow.booking.booking.dto.*;
 import com.bookmyshow.booking.exception.*;
+import com.bookmyshow.booking.messaging.EventStore;
+import com.bookmyshow.booking.messaging.PaymentEvent;
+import java.math.BigDecimal;
+import java.util.UUID;
 import com.bookmyshow.booking.reservation.ReservationService;
 import com.bookmyshow.booking.seat.ShowSeat;
 import org.springframework.stereotype.Service;
@@ -14,15 +18,17 @@ public class BookingService {
     private final BookingRepository repository;
     private final ReservationService reservationService;
     private final Clock clock;
+    private final EventStore events;
 
-    public BookingService(BookingRepository repository, ReservationService reservationService, Clock clock) {
+    public BookingService(BookingRepository repository, ReservationService reservationService, Clock clock, EventStore events) {
         this.repository = repository;
         this.reservationService = reservationService;
         this.clock = clock;
+        this.events = events;
     }
 
     @Transactional
-    public BookingResponse create(BookingRequest request) {
+    public BookingResponse create(BookingRequest request, String subject) {
         var reservation = reservationService.lockByReference(request.reservationReference());
         var existing = repository.findByReservationId(reservation.getId());
         if (existing.isPresent()) {
@@ -30,7 +36,20 @@ public class BookingService {
             return toResponse(existing.get());
         }
         reservation.requireActive(clock.instant());
-        return toResponse(repository.save(new Booking(reservation)));
+        if (subject == null || !subject.matches("[1-9][0-9]*")) {
+            throw new BusinessValidationException("An authenticated subject is required");
+        }
+        var booking = new Booking(reservation);
+        // No Catalog pricing exists yet: a fixed server-side learning fare, never client supplied.
+        var amount = new BigDecimal("100.00").multiply(
+                BigDecimal.valueOf(reservationService.lockHeldSeats(reservation).size()));
+        reservation.requireActive(clock.instant());
+        booking.requestPayment(subject, amount);
+        repository.save(booking);
+        events.append(PaymentEvent.BOOKINGS,
+                new PaymentEvent(UUID.randomUUID(), 1, "BookingCreated",
+                        booking.getBookingReference(), subject, amount, "INR", null, clock.instant(), reservation.getExpiresAt()));
+        return toResponse(booking);
     }
 
     public BookingResponse getByReference(String reference) {

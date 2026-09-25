@@ -15,8 +15,9 @@ public class BookingController {
     public BookingController(BookingService service) { this.service = service; }
 
     @PostMapping
-    public ResponseEntity<BookingResponse> create(@Valid @RequestBody BookingRequest request) {
-        var response = service.create(request);
+    public ResponseEntity<BookingResponse> create(@Valid @RequestBody BookingRequest request,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal org.springframework.security.oauth2.jwt.Jwt jwt) {
+        var response = service.create(request, jwt.getSubject());
         var location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{reference}").buildAndExpand(response.bookingReference()).toUri();
         // 200 for both first creation and replay: the operation ensures one resource exists.
@@ -30,7 +31,7 @@ public class BookingController {
 
     @PostMapping("/{reference}/confirm")
     public BookingResponse confirm(@PathVariable @Size(max = 36) String reference) {
-        return service.confirm(reference);
+        throw new com.bookmyshow.booking.exception.ConflictException("Confirmation is driven by PaymentSucceeded events");
     }
 
     @PostMapping("/{reference}/cancel")

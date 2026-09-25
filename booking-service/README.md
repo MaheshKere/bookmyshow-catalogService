@@ -1,3 +1,7 @@
+# Current payment phase
+
+New bookings atomically enqueue BookingCreated. Payment results drive the existing confirmation/cancellation lifecycle; HTTP confirm returns 409. See the root [Payment/Kafka documentation](../README.md#payment-and-reliable-kafka-communication-2026-09-25). The original notes below describe the earlier learning phase; statements that Kafka/Outbox/Payment are absent are historical.
+
 # Booking Service ? reservations and database concurrency
 
 Security update: Booking now independently validates RSA JWTs. Seat browsing remains public; seat initialization requires ADMIN; reservation/booking endpoints require USER or ADMIN. Set JWT_PUBLIC_KEY_LOCATION before startup, including dev. Authorization is currently role-level, not per-user ownership. See the [root security/setup guide](../README.md). Reservation/booking business behavior and migrations are unchanged.

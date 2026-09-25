@@ -16,6 +16,7 @@ class GatewaySecurityRoutingTest {
     static final DisposableServer identity = backend("identity");
     static final DisposableServer catalog = backend("catalog");
     static final DisposableServer booking = backend("booking");
+    static final DisposableServer payment = backend("payment");
 
     static DisposableServer backend(String name) {
         return HttpServer.create().host("127.0.0.1").port(0).handle((request, response) ->
@@ -31,11 +32,20 @@ class GatewaySecurityRoutingTest {
     @DynamicPropertySource static void downstream(DynamicPropertyRegistry registry) {
         registry.add("downstream.identity-url", () -> "http://127.0.0.1:" + identity.port());
         registry.add("downstream.catalog-url", () -> "http://127.0.0.1:" + catalog.port());
+        registry.add("downstream.payment-url", () -> "http://127.0.0.1:" + payment.port());
         registry.add("downstream.booking-url", () -> "http://127.0.0.1:" + booking.port());
     }
     @Autowired WebTestClient client;
-    @AfterAll static void stop() { identity.disposeNow(); catalog.disposeNow(); booking.disposeNow(); }
+    @AfterAll static void stop() { identity.disposeNow(); catalog.disposeNow(); booking.disposeNow(); payment.disposeNow(); }
 
+    @Test void paymentRoutingRequiresJwtAndPreservesPath() {
+        String path = "/api/v1/payments/booking/ref?view=status";
+        client.get().uri(path).exchange().expectStatus().isUnauthorized();
+        client.get().uri(path).headers(h -> h.setBearerAuth(TestTokens.token("USER")))
+                .exchange().expectStatus().isOk().expectHeader().valueEquals("X-Backend", "payment")
+                .expectHeader().valueEquals("X-Received-Path", path);
+        client.get().uri(path).headers(h -> h.setBearerAuth("invalid")).exchange().expectStatus().isUnauthorized();
+    }
     @Test void publicAuthRoutesReachIdentityWithoutRewriting() {
         for (String path : List.of("/api/v1/auth/register", "/api/v1/auth/login")) {
             client.post().uri(path).bodyValue("{}").exchange().expectStatus().isOk()

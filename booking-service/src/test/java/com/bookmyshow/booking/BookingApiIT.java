@@ -81,6 +81,9 @@ class BookingApiIT {
     @Autowired PlatformTransactionManager transactionManager;
 
     @BeforeEach void clean() {
+        jdbc.update("delete from booking_payment_results");
+        jdbc.update("delete from consumed_events");
+        jdbc.update("delete from outbox_events");
         jdbc.update("delete from bookings");
         jdbc.update("delete from reservation_seats");
         jdbc.update("delete from show_seats");
@@ -96,7 +99,7 @@ class BookingApiIT {
         return reservations.reserve(new ReservationRequest(showId, ids));
     }
     private BookingResponse createBooking(ReservationResponse reservation) {
-        return bookings.create(new BookingRequest(reservation.reservationReference()));
+        return bookings.create(new BookingRequest(reservation.reservationReference()), "1");
     }
     private int reserveHttp(long showId, List<Long> ids) throws Exception {
         return mvc.perform(post("/api/v1/reservations").contentType(MediaType.APPLICATION_JSON)
@@ -104,6 +107,11 @@ class BookingApiIT {
                 .andReturn().getResponse().getStatus();
     }
     private int postAction(String path) throws Exception {
+        // Exercise the internal lifecycle in concurrency tests; HTTP confirmation is retired.
+        if (path.endsWith("/confirm")) {
+            try { bookings.confirm(path.split("/")[4]); return 200; }
+            catch (com.bookmyshow.booking.exception.ConflictException exception) { return 409; }
+        }
         return mvc.perform(post(path)).andReturn().getResponse().getStatus();
     }
     private long count(String sql) { return jdbc.queryForObject(sql, Long.class); }
@@ -169,9 +177,10 @@ class BookingApiIT {
         mvc.perform(post("/api/v1/bookings").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.bookingReference").value(booking.bookingReference()));
         mvc.perform(post("/api/v1/bookings/{reference}/confirm", booking.bookingReference()))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CONFIRMED"));
+                .andExpect(status().isConflict());
         mvc.perform(post("/api/v1/bookings/{reference}/confirm", booking.bookingReference()))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CONFIRMED"));
+                .andExpect(status().isConflict());
+        bookings.confirm(booking.bookingReference());
         mvc.perform(get("/api/v1/bookings/{reference}", booking.bookingReference()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.reservationReference").value(reservation.reservationReference()));
         mvc.perform(get("/api/v1/reservations/{reference}", reservation.reservationReference()))
@@ -198,7 +207,7 @@ class BookingApiIT {
         assertThat(reservationRepository.count()).isEqualTo(1);
         mvc.perform(post("/api/v1/bookings").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"reservationReference\":\"missing\"}")).andExpect(status().isNotFound());
-        mvc.perform(post("/api/v1/bookings/missing/confirm")).andExpect(status().isNotFound());
+        mvc.perform(post("/api/v1/bookings/missing/confirm")).andExpect(status().isConflict());
     }
 
     @Test void expirationReleasesSeatsCancelsPendingBookingAndRetainsHistory() throws Exception {
@@ -399,4 +408,78 @@ class BookingApiIT {
         assertThat(count("select count(*) from information_schema.tables where table_schema='public' and table_name in ('movies','theaters','screens','shows')"))
                 .isZero();
     }
-}
+
+    @Autowired com.bookmyshow.booking.messaging.PaymentResultHandler paymentResults;
+    @Autowired com.bookmyshow.booking.messaging.EventCodec eventCodec;
+
+    private com.bookmyshow.booking.messaging.PaymentEvent result(BookingResponse booking, String type) {
+        var request = eventCodec.read(booking.bookingReference(), jdbc.queryForObject(
+                "select payload from outbox_events where booking_reference=?", String.class, booking.bookingReference()));
+        return new com.bookmyshow.booking.messaging.PaymentEvent(UUID.randomUUID(), 1, type,
+                request.bookingReference(), request.subject(), request.amount(), request.currency(),
+                UUID.randomUUID().toString(), NOW, request.expiresAt());
+    }
+    @Test void bookingAndOutboxCommitAndRollbackTogether() {
+        var reservation = reserve(100L, initialize(100L, "A1"));
+        assertThatThrownBy(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            createBooking(reservation);
+            throw new IllegalStateException("force rollback");
+        })).isInstanceOf(IllegalStateException.class);
+        assertThat(bookingRepository.count()).isZero();
+        assertThat(count("select count(*) from outbox_events")).isZero();
+        var booking = createBooking(reservation);
+        createBooking(reservation);
+        assertThat(count("select count(*) from outbox_events")).isEqualTo(1);
+        assertThat(bookings.getByReference(booking.bookingReference()).status()).isEqualTo(BookingStatus.PENDING);
+        assertThat(count("select count(*) from show_seats where status='HELD'")).isEqualTo(1);
+    }
+    @Test void paymentSuccessAndDuplicateResultsConfirmOnlyOnce() throws Exception {
+        var booking = createBooking(reserve(100L, initialize(100L, "A1")));
+        var event = result(booking, "PaymentSucceeded");
+        race(() -> { paymentResults.accept(event); return true; }, () -> { paymentResults.accept(event); return true; });
+        paymentResults.accept(new com.bookmyshow.booking.messaging.PaymentEvent(UUID.randomUUID(), 1, event.eventType(),
+                event.bookingReference(), event.subject(), event.amount(), event.currency(),
+                event.paymentReference(), event.occurredAt(), event.expiresAt()));
+        assertThat(bookings.getByReference(booking.bookingReference()).status()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(count("select count(*) from show_seats where status='BOOKED'")).isEqualTo(1);
+        assertThat(count("select count(*) from booking_payment_results")).isEqualTo(1);
+        assertThat(count("select count(*) from consumed_events")).isEqualTo(2);
+    }
+    @Test void paymentFailureReleasesSeatsAndReplayIsSafe() {
+        var booking = createBooking(reserve(100L, initialize(100L, "A1")));
+        var event = result(booking, "PaymentFailed");
+        paymentResults.accept(event);
+        paymentResults.accept(event);
+        assertThat(bookings.getByReference(booking.bookingReference()).status()).isEqualTo(BookingStatus.CANCELLED);
+        assertThat(count("select count(*) from show_seats where status='AVAILABLE'")).isEqualTo(1);
+        assertThat(count("select count(*) from consumed_events")).isEqualTo(1);
+    }
+    @Test void conflictingResultRollsBackInboxClaim() {
+        var booking = createBooking(reserve(100L, initialize(100L, "A1")));
+        paymentResults.accept(result(booking, "PaymentSucceeded"));
+        assertThatThrownBy(() -> paymentResults.accept(result(booking, "PaymentFailed")))
+                .isInstanceOf(com.bookmyshow.booking.messaging.PermanentEventException.class);
+        assertThat(bookings.getByReference(booking.bookingReference()).status()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(count("select count(*) from consumed_events")).isEqualTo(1);
+    }
+    @Test void lateSuccessNeverResurrectsExpiredSeats() {
+        var reservation = reserve(100L, initialize(100L, "A1"));
+        var booking = createBooking(reservation);
+        clock.set(reservation.expiresAt());
+        reservations.expire(reservation.id());
+        assertThatThrownBy(() -> paymentResults.accept(result(booking, "PaymentSucceeded")))
+                .isInstanceOf(com.bookmyshow.booking.messaging.PermanentEventException.class);
+        assertThat(count("select count(*) from consumed_events")).isZero();
+        assertThat(count("select count(*) from show_seats where status='AVAILABLE'")).isEqualTo(1);
+    }
+    @Test void mismatchedPaymentAmountIsRejectedWithoutStateChange() {
+        var booking = createBooking(reserve(100L, initialize(100L, "A1")));
+        var event = result(booking, "PaymentSucceeded");
+        var wrong = new com.bookmyshow.booking.messaging.PaymentEvent(event.eventId(), 1, event.eventType(),
+                event.bookingReference(), event.subject(), new java.math.BigDecimal("0.01"), event.currency(),
+                event.paymentReference(), NOW, event.expiresAt());
+        assertThatThrownBy(() -> paymentResults.accept(wrong))
+                .isInstanceOf(com.bookmyshow.booking.messaging.PermanentEventException.class);
+        assertThat(count("select count(*) from consumed_events")).isZero();
+        assertThat(bookings.getByReference(booking.bookingReference()).status()).isEqualTo(BookingStatus.PENDING);
+    }}

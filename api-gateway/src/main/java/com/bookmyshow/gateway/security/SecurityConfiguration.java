@@ -31,7 +31,7 @@ public class SecurityConfiguration {
                                 "/api/v1/screens/**", "/api/v1/shows/**").permitAll()
                         .pathMatchers("/api/v1/movies/**", "/api/v1/theaters/**",
                                 "/api/v1/screens/**", "/api/v1/shows/**").hasRole("ADMIN")
-                        .pathMatchers("/api/v1/reservations/**", "/api/v1/bookings/**").hasAnyRole("USER", "ADMIN")
+                        .pathMatchers("/api/v1/reservations/**", "/api/v1/bookings/**", "/api/v1/payments/**").hasAnyRole("USER", "ADMIN")
                         .anyExchange().denyAll())
                 .exceptionHandling(errors -> errors
                         .authenticationEntryPoint((exchange, exception) -> problem(exchange, mapper, HttpStatus.UNAUTHORIZED))

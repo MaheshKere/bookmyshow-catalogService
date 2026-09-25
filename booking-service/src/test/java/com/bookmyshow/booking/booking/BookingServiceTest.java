@@ -17,13 +17,14 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class BookingServiceTest {
     @Mock BookingRepository repository;
+    @Mock com.bookmyshow.booking.messaging.EventStore events;
     @Mock ReservationService reservations;
     BookingService service;
     Reservation reservation;
     Booking booking;
     final Instant now = Instant.parse("2030-01-01T10:00:00Z");
     @BeforeEach void setUp() {
-        service = new BookingService(repository, reservations, Clock.fixed(now, ZoneOffset.UTC));
+        service = new BookingService(repository, reservations, Clock.fixed(now, ZoneOffset.UTC), events);
         reservation = new Reservation(100L, now.plusSeconds(300));
         ReflectionTestUtils.setField(reservation, "id", 1L);
         booking = new Booking(reservation);
@@ -37,7 +38,8 @@ class BookingServiceTest {
     @Test void createsPendingBooking() {
         when(reservations.lockByReference("res")).thenReturn(reservation);
         when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
-        var response = service.create(new BookingRequest("res"));
+        when(reservations.lockHeldSeats(reservation)).thenReturn(List.of(new ShowSeat(100L, "A1")));
+        var response = service.create(new BookingRequest("res"), "1");
         assertThat(response.status()).isEqualTo(BookingStatus.PENDING);
         assertThat(response.reservationId()).isEqualTo(1L);
         verify(repository).save(any());
@@ -48,7 +50,7 @@ class BookingServiceTest {
         when(repository.findByReservationId(1L)).thenReturn(Optional.of(booking));
         booking.confirm();
         reservation.confirm();
-        var response = service.create(new BookingRequest("res"));
+        var response = service.create(new BookingRequest("res"), "1");
         assertThat(response.bookingReference()).isEqualTo(booking.getBookingReference());
         assertThat(response.status()).isEqualTo(BookingStatus.CONFIRMED);
         verify(repository, never()).save(any());
@@ -57,7 +59,7 @@ class BookingServiceTest {
     @Test void newBookingRejectsExpiredReservation() {
         ReflectionTestUtils.setField(reservation, "expiresAt", now);
         when(reservations.lockByReference("res")).thenReturn(reservation);
-        assertThatThrownBy(() -> service.create(new BookingRequest("res"))).isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> service.create(new BookingRequest("res"), "1")).isInstanceOf(ConflictException.class);
         verify(repository, never()).save(any());
     }
 
