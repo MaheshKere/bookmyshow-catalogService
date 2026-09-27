@@ -1306,3 +1306,18 @@ The following files were added or edited for this phase. The earlier phase also 
 - [EARLIER_ANSWERS.md](EARLIER_ANSWERS.md): this follow-up explanation; documentation only.
 
 The test results above are from the completed implementation run. Tests were not rerun for this documentation-only follow-up.
+
+## Database reset helper - preserve Identity
+
+Updated reset-bookmyshow-db.bat for Postman reruns. It now resets the public schemas of catalog_db (bookmyshow-postgres), booking_db (booking-postgres), and payment_db (payment-postgres), while never targeting identity_db. Registered users and password hashes are retained.
+
+The helper checks all three database connections before starting. Each schema drop/recreation runs in its own PostgreSQL transaction with ON_ERROR_STOP enabled. It exits on failure and explains that earlier successful database resets cannot be rolled back across databases.
+
+Stop Catalog, Booking and Payment before running the helper; restart them afterwards so Flyway recreates all tables, including inbox/outbox and migration history. Kafka topics and consumer offsets are retained, so old queued events can still be processed after restarting. This is a database reset, not a full Kafka environment reset.
+
+Run from the repository root in PowerShell: .\reset-bookmyshow-db.bat
+
+The script was reviewed but not executed during this change; no database data was deleted.
+## 2026-09-26 - Kafka bootstrap servers in dev profiles
+
+Added spring.kafka.bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092} explicitly to Booking and Payment application-dev.yml files. Both dev profiles now read KAFKA_BOOTSTRAP_SERVERS from the environment and fall back to localhost:9092 when it is unset. The base profiles already had the same setting; runtime behavior is unchanged, and the development configuration is now explicit. No services were restarted. This configuration-only change was checked with git diff --check; the Maven suite was not rerun.

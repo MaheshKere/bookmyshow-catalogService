@@ -1,4 +1,6 @@
 spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:[::1]:9092}
   datasource:
     url: "jdbc:postgresql://[::1]:5433/booking_db"
     username: booking_user

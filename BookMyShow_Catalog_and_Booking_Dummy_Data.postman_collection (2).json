@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "6dd4cc69-0c61-4d90-a610-97bc4cb88716",
-    "name": "BookMyShow Catalog + Booking - Dummy Data",
-    "description": "Run Catalog requests first to create Movies, Theaters, Screens and Shows and capture their IDs. Then run the Booking Service folder to initialize show seats, reserve seats, create a booking and confirm it.",
+    "name": "BookMyShow - Catalog + Booking + Payment (Prompt 6)",
+    "description": "Extended from the earlier Catalog + Booking dummy-data collection with Prompt 6 Kafka payment verification.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -13,9 +13,67 @@
     {
       "key": "bookingBaseUrl",
       "value": "http://localhost:8082"
+    },
+    {
+      "key": "gatewayBaseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "paymentBaseUrl",
+      "value": "http://localhost:8084"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "bookingReference",
+      "value": ""
     }
   ],
   "item": [
+    {
+      "name": "00 - Security Setup - Check accessToken",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{gatewayBaseUrl}}/api/v1/users/me",
+          "host": [
+            "{{gatewayBaseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "users",
+            "me"
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "description": "Set collection variable accessToken to a valid ADMIN JWT before running the full collection."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"accessToken is configured and valid\", function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
     {
       "name": "01 - Create Movie Chhaava",
       "request": {
@@ -45,6 +103,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -92,6 +160,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -139,6 +217,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -186,6 +274,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -235,6 +333,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -284,6 +392,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -333,6 +451,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -380,6 +508,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -427,6 +565,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -474,6 +622,16 @@
               "language": "json"
             }
           }
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
         }
       },
       "response": [],
@@ -604,6 +762,16 @@
                   "language": "json"
                 }
               }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -702,6 +870,16 @@
                   "language": "json"
                 }
               }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -780,6 +958,16 @@
                   "language": "json"
                 }
               }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -792,7 +980,11 @@
                   "pm.test(\"Booking created/replayed\", () => pm.response.to.have.status(200));",
                   "const r = pm.response.json();",
                   "pm.collectionVariables.set(\"bookingReference\", r.bookingReference);",
-                  "console.log(\"bookingReference:\", r.bookingReference);"
+                  "console.log(\"bookingReference:\", r.bookingReference);",
+                  "if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "  const r = pm.response.json();",
+                  "  if (r.bookingReference) pm.collectionVariables.set(\"bookingReference\", r.bookingReference);",
+                  "}"
                 ]
               }
             }
@@ -824,38 +1016,6 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Booking returned\", () => pm.response.to.have.status(200));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "21 - Confirm Booking",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{bookingBaseUrl}}/api/v1/bookings/{{bookingReference}}/confirm",
-              "host": [
-                "{{bookingBaseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "bookings",
-                "{{bookingReference}}",
-                "confirm"
-              ]
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Booking confirmed\", () => pm.response.to.have.status(200));"
                 ]
               }
             }
@@ -934,6 +1094,16 @@
                   "language": "json"
                 }
               }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "response": [],
@@ -948,6 +1118,142 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "Prompt 6 - Kafka Payment Flow",
+      "item": [
+        {
+          "name": "01 - Get Booking After Kafka Processing",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/v1/bookings/{{bookingReference}}",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bookings",
+                "{{bookingReference}}"
+              ]
+            },
+            "description": "Booking may first be PENDING; re-run after async processing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Booking can be read\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "console.log(\"Booking status:\", r.status);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "02 - Get Payment By Booking Reference",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/v1/payments/booking/{{bookingReference}}",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "booking",
+                "{{bookingReference}}"
+              ]
+            },
+            "description": "Immediate call can be 404 until Payment consumes BookingCreated."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Payment is available\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) console.log(\"Payment:\", pm.response.json());"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "03 - Manual Booking Confirm Should Be Disabled",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{gatewayBaseUrl}}/api/v1/bookings/{{bookingReference}}/confirm",
+              "host": [
+                "{{gatewayBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bookings",
+                "{{bookingReference}}",
+                "confirm"
+              ]
+            },
+            "description": "Prompt 6 disables HTTP confirmation; Kafka payment results drive the lifecycle."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Manual confirmation is disabled\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "response": []
         }
       ]
     }
