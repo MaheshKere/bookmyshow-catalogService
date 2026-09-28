@@ -1,4 +1,13 @@
 spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:500ms}
+      timeout: ${REDIS_COMMAND_TIMEOUT:500ms}
+      repositories:
+        enabled: false
   application:
     name: catalog-service
   datasource:
@@ -29,3 +38,13 @@ security:
     public-key-location: ${JWT_PUBLIC_KEY_LOCATION}
     issuer: ${JWT_ISSUER:bookmyshow-identity}
     audience: ${JWT_AUDIENCE:bookmyshow-api}
+
+catalog:
+  movie-cache:
+    enabled: ${MOVIE_CACHE_ENABLED:true}
+    ttl: ${MOVIE_CACHE_TTL:PT5M}
+learning:
+  movie-report:
+    enabled: ${MOVIE_REPORT_ENABLED:false}
+    interval-ms: ${MOVIE_REPORT_INTERVAL_MS:60000}
+    lease: ${MOVIE_REPORT_LEASE:PT30S}

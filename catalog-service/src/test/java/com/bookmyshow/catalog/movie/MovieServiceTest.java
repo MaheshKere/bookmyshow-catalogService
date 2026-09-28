@@ -18,11 +18,13 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class MovieServiceTest {
     @Mock MovieRepository repository;
+    @Mock com.bookmyshow.catalog.cache.MovieCache cache;
+    @Mock org.springframework.context.ApplicationEventPublisher events;
     MovieService service;
     final MovieRequest request = new MovieRequest("Arrival", "A science fiction movie", "English",
             "Science Fiction", 116, LocalDate.of(2016, 11, 11), true);
 
-    @BeforeEach void setUp() { service = new MovieService(repository); }
+    @BeforeEach void setUp() { service = new MovieService(repository, cache, events); }
 
     @Test void createsMovieFromRequest() {
         when(repository.save(any(Movie.class))).thenAnswer(invocation -> invocation.getArgument(0));

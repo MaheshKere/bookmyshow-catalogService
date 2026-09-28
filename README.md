@@ -171,7 +171,7 @@ Access tokens expire after 15 minutes by default, using zero clock-skew allowanc
 
 Booking authorization is deliberately **role-level**, preserving its existing domain and database. Reservations have no ownership field; new Bookings record the initiating JWT subject for payment correlation. Any authenticated USER/ADMIN knowing a reference can operate on it. This phase does not claim owner-only booking privacy/authorization; add subject ownership checks and a migration before exposing real users' bookings. The HTTP confirm operation now returns 409; payment results drive confirmation through the existing internal lifecycle.
 
-For a larger deployment, keep service ports private, terminate HTTPS correctly, use secure key storage and key rotation/JWKS, add per-user ownership authorization, and define revocation/account-state policies. Do not treat this learning phase as a complete production identity platform. Payment, Kafka and transactional outboxes are now added as described below. Real notification providers, Redis, Saga orchestration, Kubernetes, social login, refresh tokens and service discovery remain deferred.
+For a larger deployment, keep service ports private, terminate HTTPS correctly, use secure key storage and key rotation/JWKS, add per-user ownership authorization, and define revocation/account-state policies. Do not treat this learning phase as a complete production identity platform. Payment, Kafka and transactional outboxes are now added as described below. Real notification providers, Saga orchestration, Kubernetes, social login, refresh tokens and service discovery remain deferred.
 
 ## Try it through Gateway
 
@@ -414,7 +414,7 @@ mvn -Pintegration verify
 
 The complete verify command runs every module's tests, including disposable real PostgreSQL and Kafka Testcontainers. No external application database or Kafka is required, only a working Docker-compatible Podman API and image downloads. Tests do not silently skip without the engine. They cover rollback, duplicate delivery, publication/replay, retry success and exhaustion, DLT, payment/security/routing, invalid transitions and seat concurrency.
 
-This phase does **not** implement real payment gateway integration, real notification providers, Redis, a Saga orchestration framework, Kubernetes, or production Kafka cluster configuration. Also deferred: automated refunds/reconciliation, real pricing, reservation ownership, outbox/inbox cleanup, DLT tooling, Kafka TLS/SASL/ACLs, monitoring, multi-node replication and schema registry. Local Kafka is a trusted development boundary; HTTP JWT validation does not authenticate Kafka producers. A real provider adapter needs provider idempotency, webhook verification and recovery for ambiguous network outcomes; simply replacing the mock with a synchronous SDK call inside this transaction is insufficient.
+This phase does **not** implement real payment gateway integration, real notification providers, a Saga orchestration framework, Kubernetes, or production Kafka cluster configuration. Also deferred: automated refunds/reconciliation, real pricing, reservation ownership, outbox/inbox cleanup, DLT tooling, Kafka TLS/SASL/ACLs, monitoring, multi-node replication and schema registry. Local Kafka is a trusted development boundary; HTTP JWT validation does not authenticate Kafka producers. A real provider adapter needs provider idempotency, webhook verification and recovery for ambiguous network outcomes; simply replacing the mock with a synchronous SDK call inside this transaction is insufficient.
 
 See [Earlier_answer.md](Earlier_answer.md) for file/schema inventory and final verification counts.
 ### Current phase verification
@@ -454,3 +454,32 @@ environment variables, Podman/startup commands, end-to-end example, failure scen
 delivery limitations. Start Notification as the sixth service; it needs no JWT keys or Gateway route.
 The older verification sections above describe earlier phases; current results are recorded in
 [Earlier_answer.md](Earlier_answer.md).
+
+## Redis learning phase (2026-09-28)
+
+Catalog movie-by-ID reads now use cache-aside Redis JSON entries (`movie:{id}`, configurable five-minute
+TTL). Movie writes invalidate after PostgreSQL commit. Gateway uses a shared atomic Redis fixed-window
+limiter for movie GET requests (60/minute by default), returning 429 with Retry-After when exceeded.
+An optional Catalog movie-count reporting job demonstrates UUID-owned leases and atomic safe unlock.
+Booking's PostgreSQL PESSIMISTIC_WRITE seat locks remain authoritative and unchanged.
+
+```text
+Client -> API Gateway -> Redis rate-limit window
+                     -> Catalog -> Redis cache HIT
+                                -> PostgreSQL on MISS -> populate Redis
+
+Booking DB + Outbox -> Kafka -> Payment DB + Outbox -> Kafka -> Booking CONFIRMED + Outbox
+ -> Kafka BookingConfirmed -> Notification DB + Inbox -> Mock Email/SMS
+```
+
+Redis is an optimization/coordination component. Catalog falls back to PostgreSQL on Redis failures;
+movie rate limiting fails open, while the reporting job skips work without a lease. Cache invalidation
+is eventually consistent and leases can expire before a paused worker finishes. No Redis data decides
+seat availability or booking transitions.
+
+See [REDIS.md](REDIS.md) for concepts, consistency trade-offs, lock-vs-database comparison, keys/TTLs,
+Podman setup, environment variables, startup commands, rate-limit identity/failure policies and tests.
+The existing Kafka/Notification/JWT architecture is preserved. Final verification and file inventory
+are recorded in [Earlier_answer.md](Earlier_answer.md).
+
+Redis phase verification: root Maven integration verification passed **213 tests** (127 unit/MVC/security/routing + 86 integration), with **0 failures, 0 errors, 0 skipped** on 2026-09-28. This includes all 11 Notification integration tests. See [Earlier_answer.md](Earlier_answer.md) for the full results and file inventory.

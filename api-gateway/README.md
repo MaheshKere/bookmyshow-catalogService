@@ -9,3 +9,8 @@ GatewayRoutes defines four routes: Identity auth/users; Booking Show-seat invent
 SecurityConfiguration uses SecurityWebFilterChain, reactive JWT validation, and no session/security-context persistence. Only the public RSA key is needed. IdentityHeaderFilter removes spoofable identity/role headers; downstream services validate the original bearer token independently. The Gateway never synthesizes trusted identity headers and requires no TokenRelay/OAuth2 client flow.
 
 GatewaySecurityRoutingTest runs an actual HTTP Gateway with three ephemeral local HTTP backends. It verifies public/protected routes, 401/403, ADMIN/USER policy, expired/wrong-issuer/wrong-audience tokens, specific Show-seat routing, query preservation, bearer forwarding, and header removal. Run mvn -pl api-gateway test from the repository root.
+
+
+## Redis learning extension
+
+See [Redis architecture and operations](../REDIS.md) for the Catalog movie cache, after-commit invalidation, optional reporting lease, Gateway movie-read rate limiting, environment variables, Podman commands and verification. Existing authorization and database/event responsibilities are preserved.

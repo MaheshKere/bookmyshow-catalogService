@@ -8,7 +8,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Collections;
+import com.bookmyshow.catalog.cache.*;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.util.List;
 
 @Service
@@ -16,19 +19,32 @@ import java.util.List;
 public class MovieService {
     private final MovieRepository repository;
 
-    public MovieService(MovieRepository repository) {
-        this.repository = repository;
+    private final MovieCache cache;
+    private final ApplicationEventPublisher events;
+
+    public MovieService(MovieRepository repository, MovieCache cache, ApplicationEventPublisher events) {
+        this.repository = repository; this.cache = cache; this.events = events;
     }
 
     @Transactional
     public MovieResponse create(MovieRequest request) {
         Movie movie = new Movie(request.title(), request.description(), request.language(),
                 request.genre(), request.durationMinutes(), request.releaseDate(), request.active());
-        return toResponse(repository.save(movie));
+        var saved = repository.save(movie);
+        events.publishEvent(new MovieChanged(saved.getId()));
+        return toResponse(saved);
     }
 
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
     public MovieResponse getById(Long id) {
-        return toResponse(findMovie(id));
+        // A normal cache hit needs no DB transaction. Repository reads have their own transaction.
+        // If a caller already owns a transaction, bypass Redis to avoid caching uncommitted state.
+        if (TransactionSynchronizationManager.isActualTransactionActive()) return toResponse(findMovie(id));
+        return cache.get(id).orElseGet(() -> {
+            var movie = toResponse(findMovie(id));
+            cache.put(movie);
+            return movie;
+        });
     }
 
     public Page<MovieResponse> getAll(Pageable pageable) {
@@ -42,12 +58,14 @@ public class MovieService {
                 request.durationMinutes(), request.releaseDate(), request.active());
         // Flush triggers dirty checking and @PreUpdate before mapping the audit timestamp.
         repository.flush();
+        events.publishEvent(new MovieChanged(id));
         return toResponse(movie);
     }
 
     @Transactional
     public void delete(Long id) {
         repository.delete(findMovie(id));
+        events.publishEvent(new MovieChanged(id));
     }
 
     private Movie findMovie(Long id) {

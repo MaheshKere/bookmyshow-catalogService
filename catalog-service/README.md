@@ -1,4 +1,4 @@
-﻿# Catalog Service — Movie iteration
+# Catalog Service — Movie iteration
 
 Security update: Catalog now independently validates RSA JWTs. GET browsing remains public; catalog writes require ADMIN. Set JWT_PUBLIC_KEY_LOCATION before startup, including dev. See the [root security/setup guide](../README.md). Existing business APIs and migrations are unchanged.
 
@@ -228,3 +228,8 @@ The dev profile connects to jdbc:postgresql://[::1]:5432/catalog_db as catalog_u
 Development logging enables DEBUG for com.bookmyshow.catalog and org.hibernate.SQL, TRACE for org.hibernate.orm.jdbc.bind (SQL parameter values), and formatted SQL. These logging settings apply only to dev; broad Spring DEBUG logging is not enabled.
 
 Spring Boot DevTools is an optional runtime dependency. During spring-boot:run it restarts the application when compiled classpath files change. Saving Java source alone is insufficient: use your IDE's build action or run mvn compile in another terminal. Spring Boot's repackage goal excludes DevTools from the executable production JAR by default; optional also prevents propagation to downstream consumers. Do not force-enable DevTools in production.
+
+
+## Redis learning extension
+
+See [Redis architecture and operations](../REDIS.md) for the Catalog movie cache, after-commit invalidation, optional reporting lease, Gateway movie-read rate limiting, environment variables, Podman commands and verification. Existing authorization and database/event responsibilities are preserved.

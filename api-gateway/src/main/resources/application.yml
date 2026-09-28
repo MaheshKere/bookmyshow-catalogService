@@ -1,4 +1,13 @@
 spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:500ms}
+      timeout: ${REDIS_COMMAND_TIMEOUT:500ms}
+      repositories:
+        enabled: false
   application:
     name: api-gateway
   cloud:
@@ -24,3 +33,9 @@ security:
     public-key-location: ${JWT_PUBLIC_KEY_LOCATION}
     issuer: ${JWT_ISSUER:bookmyshow-identity}
     audience: ${JWT_AUDIENCE:bookmyshow-api}
+
+gateway:
+  movie-rate-limit:
+    enabled: ${MOVIE_RATE_LIMIT_ENABLED:true}
+    limit: ${MOVIE_RATE_LIMIT:60}
+    window: ${MOVIE_RATE_WINDOW:PT1M}
