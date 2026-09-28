@@ -1,4 +1,4 @@
-﻿# Earlier Answers — Movie Ticket Booking Application
+# Earlier Answers — Movie Ticket Booking Application
 
 ## Answer 1: Architecture proposal
 
@@ -1321,3 +1321,159 @@ The script was reviewed but not executed during this change; no database data wa
 ## 2026-09-26 - Kafka bootstrap servers in dev profiles
 
 Added spring.kafka.bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092} explicitly to Booking and Payment application-dev.yml files. Both dev profiles now read KAFKA_BOOTSTRAP_SERVERS from the environment and fall back to localhost:9092 when it is unset. The base profiles already had the same setting; runtime behavior is unchanged, and the development configuration is now explicit. No services were restarted. This configuration-only change was checked with git diff --check; the Maven suite was not rerun.
+
+## Notification Service and BookingConfirmed workflow - 2026-09-27
+
+### Implementation and architecture
+
+Inspected the existing Booking/Payment domain, outbox, inbox, Kafka configuration, database migrations
+and tests before extending them. The implementation follows Java 17 / Spring Boot 3.5.16 conventions.
+Catalog, Identity, Gateway and Payment functionality/source/configuration were not changed.
+
+Booking now creates a BookingConfirmedEvent when PaymentSucceeded successfully transitions the booking
+to CONFIRMED. Booking, Reservation and seat changes, the payment inbox/result, and the BookingConfirmed
+outbox row participate in the same local database transaction. The event contains eventId, schemaVersion,
+eventType, bookingReference, subject, amount, currency, occurredAt and showId from the persisted booking.
+Failed/late payment results and matching replays do not emit a new confirmation. EventStore and EventCodec
+have typed overloads; the existing generic outbox publisher and scheduler are reused unchanged.
+
+```text
+Client -> Gateway -> Booking -> Booking DB + Outbox
+ -> Kafka BookingCreated -> Payment -> Payment DB + Outbox
+ -> Kafka PaymentResult -> Booking
+ -> Booking CONFIRMED + Reservation CONFIRMED + Seats BOOKED + BookingConfirmed Outbox
+ -> Kafka BookingConfirmed -> Notification -> Mock Email/SMS
+```
+
+Notification consumes BookingConfirmed, never PaymentSucceeded. It owns its database and does not call
+other services synchronously. There is no REST notification call, XA or distributed transaction.
+Notification failure cannot roll back an already committed booking.
+
+### Kafka and service configuration
+
+* New Maven module: `notification-service`, local HTTP port 8085; no business HTTP endpoints/Gateway route.
+* Source topic: `bookmyshow.booking.confirmed.v1`.
+* DLT: `bookmyshow.booking.confirmed.v1.DLT`.
+* Both topics: 3 partitions, replication factor 1 for local development.
+* Kafka key: bookingReference; consumer group: `notification-service-v1`.
+* Spring Kafka uses string JSON, manual offset management through record acknowledgement,
+  producer idempotence and acks=all, following the existing project configuration.
+* Environment variables: NOTIFICATION_SERVER_PORT, NOTIFICATION_DB_URL, NOTIFICATION_DB_USERNAME,
+  NOTIFICATION_DB_PASSWORD and KAFKA_BOOTSTRAP_SERVERS. No JWT key is required for Notification.
+* Explicit dev profile follows the repository's IPv6 localhost/Podman convention and local credentials.
+
+### Database, notification model and idempotency
+
+`notification_db` uses local PostgreSQL port 5436 and user notification_user. Flyway migration
+`V1__notifications_and_inbox.sql` creates consumed_events and notifications. Hibernate keeps
+ddl-auto=validate, UTC timestamps and open-in-view=false. No new Booking migration is needed.
+
+Notification stores id, eventId, bookingReference, subject, channel, status, recipient, message,
+createdAt and sentAt. Constraints include unique (event_id, channel), an inbox foreign key,
+channel/status checks and SENT/sentAt consistency. A booking-reference index supports lookup.
+
+INSERT ON CONFLICT DO NOTHING claims eventId in the same local transaction as both EMAIL and SMS rows.
+Concurrent duplicates wait on PostgreSQL uniqueness and return successfully after the original commits.
+Rollback removes the claim and both rows, allowing Kafka retry. Each channel goes PENDING -> SENT after
+its mock sender returns. Failed attempts do not leave a committed FAILED row; DLT headers/logs carry errors.
+
+NotificationSender has MockEmailNotificationSender and MockSmsNotificationSender adapters. They log the
+notification using explicitly synthetic recipients: user-<subject>@example.invalid and mock-sms:user-<subject>.
+No real contact lookup or provider integration was added.
+
+### Retry, DLT and failure behavior
+
+DefaultErrorHandler provides two retries one second apart (three total attempts). PermanentEventException
+marks malformed/invalid events or permanent sender rejection as non-retryable. Duplicates are no-ops.
+DeadLetterPublishingRecoverer preserves the source partition and requires successful DLT publication
+before recovery is acknowledged. Failed DLT sends leave the source record unacknowledged for later retry.
+No DLT consumer or automatic replay loop is installed.
+
+* Notification stopped: Kafka retains events within configured retention; the group catches up on restart.
+* Notification database unavailable: processing fails, retries, then DLT if Kafka is available. A service
+  unable to start because its database is unavailable must be restarted after recovery.
+* Kafka unavailable during Booking publication: confirmation stays committed; outbox stays pending for retry.
+* Duplicate delivery: no duplicate committed rows or sender invocation after an inbox claim has committed.
+* Sender failure: transaction rolls back; transient failures retry and permanent failures go directly to DLT.
+* DLT recovery is manual after fixing the cause; replay must retain the original eventId and key.
+
+### Tests added and existing tests updated
+
+* Five BookingKafkaIT tests: event fields and Kafka publication, duplicate results, confirmation/outbox
+  rollback, real PostgreSQL outbox insert failure, failed/late payment exclusion and broker-send failure.
+* BookingApiIT's request helper now selects BookingCreated by topic, because confirmed bookings have
+  two outbox rows. Its concurrent-result test also asserts exactly one confirmation event.
+* EventCodecTest: three tests for JSON round trip and invalid JSON/key/type/version/field rejection.
+* KafkaConfigurationTest: failed DLT publication does not recover the source record.
+* Eleven NotificationKafkaIT tests: channel fields, concurrent duplicates, outer transaction rollback,
+  second-sender rollback and retry, broker duplicates, transient success/exhaustion, permanent rejection,
+  malformed DLT, consumer restart catch-up and a PostgreSQL claim failure followed by explicit replay.
+* Database behavior uses real PostgreSQL Testcontainers; Kafka integration uses Kafka Testcontainers.
+  The claim-failure test injects a PostgreSQL error rather than shutting down the shared database container.
+
+### Exact verification status - incomplete
+
+Focused `mvn -pl notification-service,booking-service test` passed all 39 tests (35 Booking + 4 Notification).
+The first complete reactor run exposed the old one-outbox-row test-helper assumption; the helper was fixed.
+
+Latest complete command attempted:
+
+```powershell
+mvn -Pintegration verify -l C:\Users\kerem\bookmyshow-notification-verify-final.log
+```
+
+It finished at 2026-09-27 14:43:48 +05:30 after 3:06 minutes with **BUILD FAILURE**:
+
+| Module | Unit/MVC/security/routing passed | Integration passed | Status |
+|---|---:|---:|---|
+| catalog-service | 40 | 10 | SUCCESS |
+| booking-service | 35 | 33 | SUCCESS |
+| identity-service | 21 | 6 | SUCCESS |
+| api-gateway | 9 | 0 | SUCCESS |
+| payment-service | 6 | 10 | SUCCESS |
+| notification-service | 4 | Not executed | Testcontainers startup ERROR |
+
+**174 tests passed** (115 unit/MVC/security/routing + 59 integration). Notification's integration class
+failed before its 11 test methods ran: `IllegalStateException: Could not find a valid Docker environment`.
+Failsafe reports this as one class-level error, zero assertion failures and zero skipped tests; that does
+not mean the 11 Notification integration cases passed. All six modules compiled and packaged before this
+failure. The root aggregator was skipped after the module failure.
+
+Podman responded to an info check and its named pipes were present, but Testcontainers failed to discover
+the endpoint for this fork. The subsequent diagnostic/focused rerun was interrupted before completion.
+No successful focused rerun log exists. Do not claim full verification or completion yet.
+
+Remaining verification: restore reliable Testcontainers/Podman access, run Notification integration tests,
+resolve any failures, then run the complete root `mvn -Pintegration verify` successfully. No tests were
+disabled or configured to silently skip. No persistent development containers were created by this work.
+
+### Documentation and intentionally deferred features
+
+Root README and Booking README link to notification-service/README.md, which contains architecture,
+contract, database/environment variables, Podman commands, six-service startup, end-to-end example,
+failure scenarios, retry/DLT policy, idempotency and operational limitations.
+
+SENT means mock execution succeeded, not real delivery. Logs cannot roll back: if a later sender or commit
+fails, retries can repeat an earlier mock log line despite unique committed database state. Real providers
+need verified contact resolution, eventId/channel idempotency and durable dispatch/reconciliation for
+ambiguous send outcomes. Real Email/SMS providers, templates/preferences, retention cleanup, DLT tooling,
+monitoring, Kafka security/replication and schema registry remain deferred. Existing pricing, booking
+ownership and refund limitations remain. No six-live-service end-to-end deployment test was run.
+
+### Files created
+
+
+### Files modified
+
+- [pom.xml](pom.xml)
+- [README.md](README.md)
+- [booking-service/README.md](booking-service/README.md)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/EventCodec.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/EventCodec.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/EventStore.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/EventStore.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/KafkaConfiguration.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/KafkaConfiguration.java)
+- [booking-service/src/main/java/com/bookmyshow/booking/messaging/PaymentResultHandler.java](booking-service/src/main/java/com/bookmyshow/booking/messaging/PaymentResultHandler.java)
+- [booking-service/src/test/java/com/bookmyshow/booking/BookingApiIT.java](booking-service/src/test/java/com/bookmyshow/booking/BookingApiIT.java)
+- [booking-service/src/test/java/com/bookmyshow/booking/BookingKafkaIT.java](booking-service/src/test/java/com/bookmyshow/booking/BookingKafkaIT.java)
+- [EARLIER_ANSWERS.md](EARLIER_ANSWERS.md)
+
+The existing plural history file is named EARLIER_ANSWERS.md; on this Windows filesystem it is the requested Earlier_answers.md. Its earlier history is preserved. Separate IDE metadata changes in .idea/compiler.xml and .idea/encodings.xml were observed during the session and left intact; they were not authored as part of this implementation.
