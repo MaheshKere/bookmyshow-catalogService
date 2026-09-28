@@ -364,3 +364,12 @@ booking-service/src/test/java/com/bookmyshow/booking/seat/ShowSeatServiceTest.ja
 ```
 
 Also created root README.md, added booking-service to root pom.xml, and appended EARLIER_ANSWERS.md. Existing Catalog and IDE changes were preserved.
+
+## BookingConfirmed outbox extension
+
+Successful PaymentSucceeded handling now adds a `BookingConfirmedEvent` to the existing outbox in the
+same transaction as Booking/Reservation confirmation and seat booking. Failed/late payment and duplicate
+terminal results emit no new confirmation. The existing publisher uses `bookmyshow.booking.confirmed.v1`
+with bookingReference as the key. No new Booking tables or publisher are required. Kafka downtime leaves
+the confirmed booking committed and its outbox row pending. Notification consumes this confirmed fact
+independently; its failures cannot roll back Booking. See [Notification architecture](../notification-service/README.md).

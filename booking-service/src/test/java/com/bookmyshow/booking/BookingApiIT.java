@@ -414,7 +414,7 @@ class BookingApiIT {
 
     private com.bookmyshow.booking.messaging.PaymentEvent result(BookingResponse booking, String type) {
         var request = eventCodec.read(booking.bookingReference(), jdbc.queryForObject(
-                "select payload from outbox_events where booking_reference=?", String.class, booking.bookingReference()));
+                "select payload from outbox_events where booking_reference=? and topic='bookmyshow.booking.created.v1'", String.class, booking.bookingReference()));
         return new com.bookmyshow.booking.messaging.PaymentEvent(UUID.randomUUID(), 1, type,
                 request.bookingReference(), request.subject(), request.amount(), request.currency(),
                 UUID.randomUUID().toString(), NOW, request.expiresAt());
@@ -443,6 +443,7 @@ class BookingApiIT {
         assertThat(bookings.getByReference(booking.bookingReference()).status()).isEqualTo(BookingStatus.CONFIRMED);
         assertThat(count("select count(*) from show_seats where status='BOOKED'")).isEqualTo(1);
         assertThat(count("select count(*) from booking_payment_results")).isEqualTo(1);
+        assertThat(count("select count(*) from outbox_events where topic='bookmyshow.booking.confirmed.v1'")).isEqualTo(1);
         assertThat(count("select count(*) from consumed_events")).isEqualTo(2);
     }
     @Test void paymentFailureReleasesSeatsAndReplayIsSafe() {

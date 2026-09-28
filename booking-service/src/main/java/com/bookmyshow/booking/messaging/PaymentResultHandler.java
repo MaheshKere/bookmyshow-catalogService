@@ -48,7 +48,17 @@ public class PaymentResultHandler {
         }
         // Preserve the established Reservation -> seat lock order and deadline checks.
         try {
-            if ("PaymentSucceeded".equals(event.eventType())) bookings.confirm(event.bookingReference());
+            if ("PaymentSucceeded".equals(event.eventType())) {
+                boolean transitioning = booking.getStatus() != BookingStatus.CONFIRMED;
+                bookings.confirm(event.bookingReference());
+                if (transitioning) {
+                    // Same local transaction as Booking, Reservation and seat confirmation.
+                    // Use persisted Booking facts, never assume payment success means confirmation.
+                    events.append(new BookingConfirmedEvent(java.util.UUID.randomUUID(), 1, "BookingConfirmed",
+                            booking.getBookingReference(), booking.getSubject(), booking.getAmount(),
+                            booking.getCurrency(), java.time.Instant.now(), booking.getShowId()));
+                }
+            }
             else bookings.cancel(event.bookingReference());
         } catch (ConflictException exception) {
             // Late success cannot resurrect released seats; DLT requires reconciliation/refund.

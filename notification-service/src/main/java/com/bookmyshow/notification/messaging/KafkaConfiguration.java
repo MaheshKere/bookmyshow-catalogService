@@ -1,4 +1,4 @@
-package com.bookmyshow.booking.messaging;
+package com.bookmyshow.notification.messaging;
 
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.*;
@@ -13,11 +13,7 @@ public class KafkaConfiguration {
     KafkaAdmin.NewTopics topics() {
         return new KafkaAdmin.NewTopics(
                 TopicBuilder.name(BookingConfirmedEvent.TOPIC).partitions(3).replicas(1).build(),
-                TopicBuilder.name(BookingConfirmedEvent.TOPIC + ".DLT").partitions(3).replicas(1).build(),
-                TopicBuilder.name(PaymentEvent.BOOKINGS).partitions(3).replicas(1).build(),
-                TopicBuilder.name(PaymentEvent.RESULTS).partitions(3).replicas(1).build(),
-                TopicBuilder.name(PaymentEvent.BOOKINGS + ".DLT").partitions(3).replicas(1).build(),
-                TopicBuilder.name(PaymentEvent.RESULTS + ".DLT").partitions(3).replicas(1).build());
+                TopicBuilder.name(BookingConfirmedEvent.TOPIC + ".DLT").partitions(3).replicas(1).build());
     }
     @Bean
     DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<String, String> template) {

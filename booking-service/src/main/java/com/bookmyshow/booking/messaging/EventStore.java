@@ -15,6 +15,11 @@ public class EventStore {
         jdbc.update("insert into outbox_events(event_id,booking_reference,topic,payload) values(?,?,?,?)",
                 event.eventId(), event.bookingReference(), topic, codec.write(event));
     }
+    public void
+    append(BookingConfirmedEvent event) {
+        jdbc.update("insert into outbox_events(event_id,booking_reference,topic,payload) values(?,?,?,?)",
+                event.eventId(), event.bookingReference(), BookingConfirmedEvent.TOPIC, codec.write(event));
+    }
     public boolean claim(PaymentEvent event) {
         // ON CONFLICT waits for a concurrent claimant; rollback also removes this claim.
         return jdbc.update("insert into consumed_events(event_id) values(?) on conflict do nothing", event.eventId()) == 1;

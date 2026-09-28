@@ -1,6 +1,6 @@
 # BookMyShow learning project
 
-Java 17 / Spring Boot 3.5.16, five independently runnable Maven modules, four independently owned PostgreSQL databases, Apache Kafka.
+Java 17 / Spring Boot 3.5.16, six independently runnable Maven modules, five independently owned PostgreSQL databases, Apache Kafka.
 
 ```text
 Client -- Authorization: Bearer <JWT> --> API Gateway :8080
@@ -20,6 +20,7 @@ Client -- Authorization: Bearer <JWT> --> API Gateway :8080
 | catalog-service | Movie, Theater, Screen, Show; public reads and ADMIN writes | [Catalog README](catalog-service/README.md) |
 | booking-service | Seat inventory, reservations, bookings, PostgreSQL concurrency, outbox | [Booking README](booking-service/README.md) |
 | payment-service | Mock payments, payment_db, Kafka and result outbox | [Payment README](payment-service/README.md) |
+| notification-service | BookingConfirmed inbox, notification_db, mock Email/SMS | [Notification README](notification-service/README.md) |
 
 Gateway uses Spring Cloud 2025.0.3 (Gateway 4.3.5), compatible with Boot 3.5.x. Versions are pinned through the Spring Cloud BOM; service discovery is not used. See the [official compatibility table](https://spring.io/projects/spring-cloud/) and [2025.0 release notes](https://github.com/spring-cloud/spring-cloud-release/wiki/Spring-Cloud-2025.0-Release-Notes).
 
@@ -170,7 +171,7 @@ Access tokens expire after 15 minutes by default, using zero clock-skew allowanc
 
 Booking authorization is deliberately **role-level**, preserving its existing domain and database. Reservations have no ownership field; new Bookings record the initiating JWT subject for payment correlation. Any authenticated USER/ADMIN knowing a reference can operate on it. This phase does not claim owner-only booking privacy/authorization; add subject ownership checks and a migration before exposing real users' bookings. The HTTP confirm operation now returns 409; payment results drive confirmation through the existing internal lifecycle.
 
-For a larger deployment, keep service ports private, terminate HTTPS correctly, use secure key storage and key rotation/JWKS, add per-user ownership authorization, and define revocation/account-state policies. Do not treat this learning phase as a complete production identity platform. Payment, Kafka and transactional outboxes are now added as described below. Notification, Redis, Saga orchestration, Kubernetes, social login, refresh tokens and service discovery remain deferred.
+For a larger deployment, keep service ports private, terminate HTTPS correctly, use secure key storage and key rotation/JWKS, add per-user ownership authorization, and define revocation/account-state policies. Do not treat this learning phase as a complete production identity platform. Payment, Kafka and transactional outboxes are now added as described below. Real notification providers, Redis, Saga orchestration, Kubernetes, social login, refresh tokens and service discovery remain deferred.
 
 ## Try it through Gateway
 
@@ -413,7 +414,7 @@ mvn -Pintegration verify
 
 The complete verify command runs every module's tests, including disposable real PostgreSQL and Kafka Testcontainers. No external application database or Kafka is required, only a working Docker-compatible Podman API and image downloads. Tests do not silently skip without the engine. They cover rollback, duplicate delivery, publication/replay, retry success and exhaustion, DLT, payment/security/routing, invalid transitions and seat concurrency.
 
-This phase does **not** implement real payment gateway integration, Notification Service, Redis, a Saga orchestration framework, Kubernetes, or production Kafka cluster configuration. Also deferred: automated refunds/reconciliation, real pricing, reservation ownership, outbox/inbox cleanup, DLT tooling, Kafka TLS/SASL/ACLs, monitoring, multi-node replication and schema registry. Local Kafka is a trusted development boundary; HTTP JWT validation does not authenticate Kafka producers. A real provider adapter needs provider idempotency, webhook verification and recovery for ambiguous network outcomes; simply replacing the mock with a synchronous SDK call inside this transaction is insufficient.
+This phase does **not** implement real payment gateway integration, real notification providers, Redis, a Saga orchestration framework, Kubernetes, or production Kafka cluster configuration. Also deferred: automated refunds/reconciliation, real pricing, reservation ownership, outbox/inbox cleanup, DLT tooling, Kafka TLS/SASL/ACLs, monitoring, multi-node replication and schema registry. Local Kafka is a trusted development boundary; HTTP JWT validation does not authenticate Kafka producers. A real provider adapter needs provider idempotency, webhook verification and recovery for ambiguous network outcomes; simply replacing the mock with a synchronous SDK call inside this transaction is insufficient.
 
 See [Earlier_answer.md](Earlier_answer.md) for file/schema inventory and final verification counts.
 ### Current phase verification
@@ -428,3 +429,28 @@ Final root mvn -Pintegration verify completed with BUILD SUCCESS on 2026-09-25 a
 | api-gateway | 9 | 0 | 9 |
 | payment-service | 6 | 10 | 16 |
 | **Total** | **111** | **54** | **165** |
+
+## Booking-confirmed notifications (2026-09-27)
+
+Notification Service now listens to **BookingConfirmed**, never PaymentSucceeded. Booking writes the new
+event into its existing outbox in the same transaction that confirms Booking/Reservation and books seats.
+Notification owns `notification_db` (5436), runs on 8085, and records mock EMAIL/SMS sends with a transactional
+inbox claim. Existing Catalog, Identity, Gateway and Payment functionality is unchanged.
+
+```text
+Client -> Gateway -> Booking -> Booking DB + Outbox
+ -> Kafka BookingCreated -> Payment -> Payment DB + Outbox
+ -> Kafka PaymentResult -> Booking -> Booking CONFIRMED + BookingConfirmed Outbox
+ -> Kafka BookingConfirmed -> Notification -> Mock Email/SMS
+```
+
+Added topics: `bookmyshow.booking.confirmed.v1` and `bookmyshow.booking.confirmed.v1.DLT`, each with 3 partitions
+and local replication factor 1; key `bookingReference`, consumer group `notification-service-v1`.
+The normal retry policy is three total attempts with 1-second intervals; permanent failures go directly
+to DLT. Failed DLT publication does not acknowledge source recovery. No automatic replay loop is installed.
+
+See the [Notification README](notification-service/README.md) for the full contract, database schema,
+environment variables, Podman/startup commands, end-to-end example, failure scenarios, idempotency and mock
+delivery limitations. Start Notification as the sixth service; it needs no JWT keys or Gateway route.
+The older verification sections above describe earlier phases; current results are recorded in
+[Earlier_answer.md](Earlier_answer.md).
